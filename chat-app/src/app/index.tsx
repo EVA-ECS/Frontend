@@ -15,6 +15,7 @@ import { supabase } from '../utils/supabase';
 import { Session } from '@supabase/supabase-js';
 
 export default function LoginScreen() {
+  console.log('LoginScreen WIRD GELADEN');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -22,10 +23,13 @@ export default function LoginScreen() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log('SESSION BEIM START:', session);
       setSession(session);
     });
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log('AUTH EVENT:', _event);
+      console.log('NEUE SESSION:', session);
       setSession(session);
     });
 
@@ -34,58 +38,182 @@ export default function LoginScreen() {
     };
   }, []);
 
-  async function signInWithEmail() {
+ async function signInWithEmail() {
+  try {
     setLoading(true);
+
     const { error } = await supabase.auth.signInWithPassword({
-      email: email,
-      password: password,
+      email,
+      password,
     });
 
-    if (error) Alert.alert('Fehler beim Login', error.message);
+    if (error) {
+      Alert.alert('Fehler beim Login', error.message);
+    }
+  } catch (error) {
+    console.error(error);
+    Alert.alert('Fehler', 'Login fehlgeschlagen.');
+  } finally {
     setLoading(false);
   }
+}
 
   async function signUpWithEmail() {
+  try {
     setLoading(true);
+
     const {
       data: { session },
       error,
     } = await supabase.auth.signUp({
-      email: email,
-      password: password,
+      email,
+      password,
     });
 
     if (error) {
       Alert.alert('Fehler', error.message);
-    } else if (!session) {
-      Alert.alert('Erfolg', 'Bitte prüfe deine E-Mails für den Bestätigungslink!');
+      return;
     }
+
+    if (!session) {
+      Alert.alert(
+        'Erfolg',
+        'Bitte prüfe deine E-Mails für den Bestätigungslink!'
+      );
+    }
+  } catch (error) {
+    console.error(error);
+    Alert.alert('Fehler', 'Registrierung fehlgeschlagen.');
+  } finally {
     setLoading(false);
   }
+}
 
   async function signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) Alert.alert('Fehler', error.message);
   }
 
-  // ANSICHT: Eingeloggt
-  if (session && session.user) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.card}>
-          <Text style={styles.title}>Willkommen!</Text>
-          <Text style={styles.subtitle}>{session.user.email}</Text>
+   // ANSICHT: Eingeloggt
+if (session && session.user) {
+  return (
+    <View style={styles.chatPage}>
 
-          <TouchableOpacity style={styles.signOutButton} onPress={signOut}>
-            <Text style={styles.signOutButtonText}>Abmelden</Text>
+      {/* SIDEBAR */}
+      <View style={styles.sidebar}>
+        <View style={styles.sidebarHeader}>
+          <Text style={styles.logo}>Chat</Text>
+        </View>
+
+        <TouchableOpacity style={styles.activeChat}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>R</Text>
+          </View>
+
+          <View>
+            <Text style={styles.chatUser}>Robin</Text>
+            <Text style={styles.lastMessage}>
+              Hey, wie läuft das Projekt?
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.chatItem}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>N</Text>
+          </View>
+
+          <View>
+            <Text style={styles.chatUser}>Niklas</Text>
+            <Text style={styles.lastMessage}>
+              Bis später 👋
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.sidebarBottom}>
+          <Text style={styles.currentUser}>
+            {session.user.email}
+          </Text>
+
+          <TouchableOpacity
+            style={styles.logoutSmall}
+            onPress={signOut}
+          >
+            <Text style={styles.logoutSmallText}>
+              Abmelden
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
-    );
-  }
 
-  // ANSICHT: Login-Formular
-  return (
+
+      {/* CHAT */}
+      <View style={styles.chatArea}>
+
+        {/* HEADER */}
+        <View style={styles.chatHeader}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>R</Text>
+          </View>
+
+          <View>
+            <Text style={styles.chatHeaderName}>Robin</Text>
+            <Text style={styles.onlineText}>Online</Text>
+          </View>
+        </View>
+
+
+        {/* NACHRICHTEN */}
+        <View style={styles.messages}>
+
+          <View style={styles.receivedMessage}>
+            <Text style={styles.receivedText}>
+              Hey 👋
+            </Text>
+          </View>
+
+          <View style={styles.receivedMessage}>
+            <Text style={styles.receivedText}>
+              Wie läuft das Chat-Projekt?
+            </Text>
+          </View>
+
+          <View style={styles.sentMessage}>
+            <Text style={styles.sentText}>
+              Eigentlich ganz gut 😄
+            </Text>
+          </View>
+
+          <View style={styles.sentMessage}>
+            <Text style={styles.sentText}>
+              Ich baue gerade das Frontend.
+            </Text>
+          </View>
+
+        </View>
+
+
+        {/* INPUT */}
+        <View style={styles.messageInputContainer}>
+          <TextInput
+            style={styles.messageInput}
+            placeholder="Nachricht schreiben..."
+            placeholderTextColor="#9ca3af"
+          />
+
+          <TouchableOpacity style={styles.sendButton}>
+            <Text style={styles.sendButtonText}>Senden</Text>
+          </TouchableOpacity>
+        </View>
+
+      </View>
+    </View>
+  );
+}
+  
+// ANSICHT: Login-Formular
+ return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
@@ -141,6 +269,7 @@ export default function LoginScreen() {
     </KeyboardAvoidingView>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {
@@ -230,5 +359,199 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
-  }
+  },
+
+  //ansich der chat seite
+
+  chatPage: {
+  flex: 1,
+  flexDirection: 'row',
+  backgroundColor: '#f3f4f6',
+},
+
+sidebar: {
+  width: 300,
+  backgroundColor: '#111827',
+  borderRightWidth: 1,
+  borderRightColor: '#374151',
+},
+
+sidebarHeader: {
+  padding: 24,
+  borderBottomWidth: 1,
+  borderBottomColor: '#374151',
+},
+
+logo: {
+  color: '#ffffff',
+  fontSize: 24,
+  fontWeight: '800',
+},
+
+activeChat: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 16,
+  backgroundColor: '#1f2937',
+  gap: 12,
+},
+
+chatItem: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 16,
+  gap: 12,
+},
+
+avatar: {
+  width: 44,
+  height: 44,
+  borderRadius: 22,
+  backgroundColor: '#4f46e5',
+  alignItems: 'center',
+  justifyContent: 'center',
+},
+
+avatarText: {
+  color: '#ffffff',
+  fontWeight: '700',
+  fontSize: 16,
+},
+
+chatUser: {
+  color: '#ffffff',
+  fontSize: 15,
+  fontWeight: '700',
+},
+
+lastMessage: {
+  color: '#9ca3af',
+  fontSize: 13,
+  marginTop: 3,
+},
+
+sidebarBottom: {
+  marginTop: 'auto',
+  padding: 20,
+  borderTopWidth: 1,
+  borderTopColor: '#374151',
+},
+
+currentUser: {
+  color: '#d1d5db',
+  fontSize: 13,
+  marginBottom: 12,
+},
+
+logoutSmall: {
+  paddingVertical: 10,
+  paddingHorizontal: 14,
+  borderRadius: 8,
+  backgroundColor: '#374151',
+},
+
+logoutSmallText: {
+  color: '#ffffff',
+  fontWeight: '600',
+  textAlign: 'center',
+},
+
+
+/* CHAT */
+
+chatArea: {
+  flex: 1,
+  backgroundColor: '#ffffff',
+},
+
+chatHeader: {
+  height: 80,
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingHorizontal: 24,
+  borderBottomWidth: 1,
+  borderBottomColor: '#e5e7eb',
+  gap: 12,
+},
+
+chatHeaderName: {
+  fontSize: 16,
+  fontWeight: '700',
+  color: '#111827',
+},
+
+onlineText: {
+  color: '#22c55e',
+  fontSize: 12,
+  marginTop: 2,
+},
+
+messages: {
+  flex: 1,
+  padding: 24,
+  gap: 10,
+},
+
+receivedMessage: {
+  alignSelf: 'flex-start',
+  backgroundColor: '#f3f4f6',
+  paddingHorizontal: 16,
+  paddingVertical: 12,
+  borderRadius: 16,
+  borderBottomLeftRadius: 4,
+  maxWidth: '65%',
+},
+
+receivedText: {
+  color: '#111827',
+  fontSize: 15,
+},
+
+sentMessage: {
+  alignSelf: 'flex-end',
+  backgroundColor: '#4f46e5',
+  paddingHorizontal: 16,
+  paddingVertical: 12,
+  borderRadius: 16,
+  borderBottomRightRadius: 4,
+  maxWidth: '65%',
+},
+
+sentText: {
+  color: '#ffffff',
+  fontSize: 15,
+},
+
+messageInputContainer: {
+  flexDirection: 'row',
+  padding: 20,
+  borderTopWidth: 1,
+  borderTopColor: '#e5e7eb',
+  gap: 12,
+},
+
+messageInput: {
+  flex: 1,
+  backgroundColor: '#f9fafb',
+  borderWidth: 1,
+  borderColor: '#e5e7eb',
+  borderRadius: 12,
+  paddingHorizontal: 16,
+  paddingVertical: 14,
+  fontSize: 15,
+  color: '#111827',
+},
+
+sendButton: {
+  backgroundColor: '#4f46e5',
+  paddingHorizontal: 22,
+  justifyContent: 'center',
+  borderRadius: 12,
+},
+
+sendButtonText: {
+  color: '#ffffff',
+  fontWeight: '700',
+},
+
 });

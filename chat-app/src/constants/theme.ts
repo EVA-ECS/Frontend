@@ -1,12 +1,15 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
+// =============================================================================
+// GEMEINSAME DESIGN-WERTE
+// Hier liegen wiederverwendbare Farben, Schriftarten und Abstände. Der aktuelle
+// Chat-Workspace besitzt zusätzlich eigene lokale Styles in chat-workspace.tsx.
+// =============================================================================
 
+// Lädt die globalen CSS-Schriftvariablen für die Web-Version.
 import '@/global.css';
 
 import { Platform } from 'react-native';
 
+// Helle und dunkle Grundfarben für Komponenten, die das globale Theme nutzen.
 export const Colors = {
   light: {
     text: '#000000',
@@ -24,8 +27,11 @@ export const Colors = {
   },
 } as const;
 
+// Erlaubt in TypeScript nur Farbnamen, die in beiden Themes existieren.
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
+// Jede Plattform erhält passende Systemschriftarten. Im Web zeigen die Werte auf
+// die CSS-Variablen aus global.css.
 export const Fonts = Platform.select({
   ios: {
     /** iOS `UIFontDescriptorSystemDesignDefault` */
@@ -51,6 +57,7 @@ export const Fonts = Platform.select({
   },
 });
 
+// Einheitliche Abstandsskala statt zufälliger Werte in jeder Komponente.
 export const Spacing = {
   half: 2,
   one: 4,
@@ -61,5 +68,6 @@ export const Spacing = {
   six: 64,
 } as const;
 
+// Zusätzlicher Platz für native Tab-Bars sowie maximale Breite für Inhalte.
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;

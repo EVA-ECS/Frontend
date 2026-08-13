@@ -1,3 +1,8 @@
+/* =============================================================================
+   GLOBALE CSS-VARIABLEN FÜR DIE WEB-VERSION
+   React Native verwendet diese Variablen über src/constants/theme.ts.
+   ============================================================================= */
+
 :root {
   --font-display:
     Spline Sans, Inter, ui-sans-serif, system-ui, sans-serif, Apple Color Emoji, Segoe UI Emoji,
