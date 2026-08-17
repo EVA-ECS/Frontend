@@ -5,7 +5,7 @@
 // Auf kleinen Displays werden Chatliste und Unterhaltung nacheinander angezeigt.
 // =============================================================================
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -88,27 +88,84 @@ const initialMessages: Record<ChatId, ChatMessage[]> = {
 // HAUPTKOMPONENTE DES CHAT-WORKSPACES
 // =============================================================================
 export default function ChatWorkspace() {
-  // --- Fenstergröße und zentraler Auth-Status ---
   const { width } = useWindowDimensions();
   const { consumeLoginSuccess, loginSuccessPending, session } = useAuth();
-
-  // Unter 760 Pixeln wird das mobile/kompakte Layout verwendet.
   const isCompact = width < 760;
 
-  // --- Inhalt des Chats ---
-  // Speichert den ausgewählten Chat, alle aktuell lokalen Nachrichten und den
-  // noch nicht gesendeten Text aus dem Eingabefeld.
   const [selectedChatId, setSelectedChatId] = useState<ChatId>('robin');
   const [messagesByChat, setMessagesByChat] =
     useState<Record<ChatId, ChatMessage[]>>(initialMessages);
   const [draft, setDraft] = useState('');
 
-  // --- UI-Zustände ---
-  // Logout-Ladespinner, mobile Seitenumschaltung und einmaliger Login-Toast.
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [showChatOnCompactScreen, setShowChatOnCompactScreen] = useState(false);
   const [showLoginNotice, setShowLoginNotice] = useState(false);
 
+  const socketRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    // Traefik nimmt die Verbindung auf Port 80 an und leitet sie zum Gateway weiter.
+    const gatewayUrl = 'ws://localhost/ws';
+    const accessToken = session.access_token;
+    let socket: WebSocket | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+
+    function connect() {
+      socket = new WebSocket(
+        `${gatewayUrl}?access_token=${encodeURIComponent(
+          accessToken
+        )}`
+      );
+
+      socket.onopen = () => {
+        console.log('WebSocket mit Gateway verbunden');
+      };
+
+      socket.onmessage = (event) => {
+        const response = JSON.parse(event.data);
+
+        console.log(
+          'Antwort vom Gateway:',
+          response
+        );
+      };
+
+      socket.onerror = () => {
+        console.warn(
+          'WebSocket-Verbindung fehlgeschlagen'
+        );
+      };
+
+      socket.onclose = () => {
+        socketRef.current = null;
+        console.log('WebSocket geschlossen');
+
+        if (!stopped) {
+          retryTimer = setTimeout(connect, 2000);
+        }
+      };
+
+      socketRef.current = socket;
+    }
+
+    connect();
+
+    return () => {
+      stopped = true;
+
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+      }
+
+      socket?.close();
+      socketRef.current = null;
+    };
+  }, [session?.access_token]);
   // =============================================================================
   // EINMALIGE ERFOLGSMELDUNG
   // Nur ein echter Login setzt loginSuccessPending auf true. Der Workspace zeigt
@@ -141,19 +198,34 @@ export default function ChatWorkspace() {
   // BEDIENFUNKTIONEN
   // =============================================================================
 
-  // Wählt links einen Chat aus. Auf kleinen Displays öffnet sich danach die
-  // Unterhaltung bildschirmfüllend.
   function selectChat(chatId: ChatId) {
     setSelectedChatId(chatId);
     setShowChatOnCompactScreen(true);
   }
 
-  // Fügt die eingegebene Nachricht nur lokal zum ausgewählten Chat hinzu.
-  // Hier kann später utils/gateway.ts für echte Backend-Nachrichten genutzt werden.
   function sendMessage() {
-    // Nur Leerzeichen gelten nicht als Nachricht.
     const text = draft.trim();
-    if (!text) return;
+    const socket = socketRef.current;
+
+    if (!text) {
+      return;
+    }
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      Alert.alert(
+        'Keine Verbindung',
+        'Der Gateway ist momentan nicht verbunden.'
+      );
+
+      return;
+    }
+
+    socket.send(
+      JSON.stringify({
+        targetId: selectedChatId,
+        text,
+      })
+    );
 
     setMessagesByChat((current) => ({
       ...current,
@@ -167,6 +239,7 @@ export default function ChatWorkspace() {
         },
       ],
     }));
+
     setDraft('');
   }
 
