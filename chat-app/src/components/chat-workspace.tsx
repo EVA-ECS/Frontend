@@ -9,7 +9,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -27,16 +26,18 @@ import { supabase } from '../utils/supabase';
 // Diese Typen legen fest, wie Chats und Nachrichten im Frontend aufgebaut sind.
 // =============================================================================
 
-// Aktuell erlaubte IDs der beiden lokalen Beispiel-Chats.
-type ChatId = 'robin' | 'niklas';
-
 // Daten, die pro Eintrag in der linken Chatliste benötigt werden.
 type ChatPreview = {
-  id: ChatId;
+  id: string;
   name: string;
-  preview: string;
-  status: string;
-  unread?: number;
+  isOnline: boolean;
+};
+
+// Nutzerformat, das der Gateway aus den echten Supabase-Nutzern liefert.
+type GatewayUser = {
+  userId: string;
+  displayName: string;
+  isOnline: boolean;
 };
 
 // Aufbau einer einzelnen Nachricht im rechten Gesprächsbereich.
@@ -48,43 +49,6 @@ type ChatMessage = {
 };
 
 // =============================================================================
-// LOKALE BEISPIELDATEN
-// Diese Daten kommen noch nicht aus einer Datenbank. Sie dienen nur dazu, das
-// Layout und die Bedienung sichtbar zu machen.
-// =============================================================================
-
-// Vorschauinformationen für die linke Chatliste.
-const chats: ChatPreview[] = [
-  {
-    id: 'robin',
-    name: 'Robin',
-    preview: 'Hey, wie läuft das Projekt?',
-    status: 'Online',
-    unread: 2,
-  },
-  {
-    id: 'niklas',
-    name: 'Niklas',
-    preview: 'Bis später 👋',
-    status: 'Vor 12 Min. aktiv',
-  },
-];
-
-// Startnachrichten, getrennt nach Chat-ID.
-const initialMessages: Record<ChatId, ChatMessage[]> = {
-  robin: [
-    { id: 'r-1', mine: false, text: 'Hey 👋', time: '17:31' },
-    { id: 'r-2', mine: false, text: 'Wie läuft das Projekt?', time: '17:32' },
-    { id: 'r-3', mine: true, text: 'Eigentlich richtig gut 😄', time: '17:34' },
-  ],
-  niklas: [
-    { id: 'n-1', mine: false, text: 'Hast du morgen kurz Zeit?', time: '16:08' },
-    { id: 'n-2', mine: true, text: 'Ja, lass uns um 10 Uhr sprechen.', time: '16:11' },
-    { id: 'n-3', mine: false, text: 'Perfekt, bis später 👋', time: '16:12' },
-  ],
-};
-
-// =============================================================================
 // HAUPTKOMPONENTE DES CHAT-WORKSPACES
 // =============================================================================
 export default function ChatWorkspace() {
@@ -92,10 +56,13 @@ export default function ChatWorkspace() {
   const { consumeLoginSuccess, loginSuccessPending, session } = useAuth();
   const isCompact = width < 760;
 
-  const [selectedChatId, setSelectedChatId] = useState<ChatId>('robin');
+  const [chats, setChats] = useState<ChatPreview[]>([]);
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [messagesByChat, setMessagesByChat] =
-    useState<Record<ChatId, ChatMessage[]>>(initialMessages);
+    useState<Record<string, ChatMessage[]>>({});
   const [draft, setDraft] = useState('');
+  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
+  const [usersError, setUsersError] = useState<string | null>(null);
 
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [showChatOnCompactScreen, setShowChatOnCompactScreen] = useState(false);
@@ -113,7 +80,21 @@ export default function ChatWorkspace() {
     const accessToken = session.access_token;
     let socket: WebSocket | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
     let stopped = false;
+
+    function stopHeartbeat() {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = undefined;
+      }
+    }
+
+    function sendHeartbeat() {
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'presence.heartbeat' }));
+      }
+    }
 
     function connect() {
       socket = new WebSocket(
@@ -124,6 +105,9 @@ export default function ChatWorkspace() {
 
       socket.onopen = () => {
         console.log('WebSocket mit Gateway verbunden');
+        sendHeartbeat();
+        stopHeartbeat();
+        heartbeatTimer = setInterval(sendHeartbeat, 30000);
       };
 
       socket.onmessage = (event) => {
@@ -142,6 +126,7 @@ export default function ChatWorkspace() {
       };
 
       socket.onclose = () => {
+        stopHeartbeat();
         socketRef.current = null;
         console.log('WebSocket geschlossen');
 
@@ -162,10 +147,81 @@ export default function ChatWorkspace() {
         clearTimeout(retryTimer);
       }
 
+      stopHeartbeat();
       socket?.close();
       socketRef.current = null;
     };
   }, [session?.access_token]);
+
+  // Lädt die echten Supabase-Nutzer samt Online-Status vom Gateway.
+  useEffect(() => {
+    if (!session) {
+      setChats([]);
+      setSelectedChatId(null);
+      setIsLoadingUsers(false);
+      return;
+    }
+
+    let stopped = false;
+
+    async function loadUsers() {
+      try {
+        const response = await fetch('http://localhost/api/users', {
+          headers: {
+            Authorization: `Bearer ${session?.access_token}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Gateway antwortet mit ${response.status}`);
+        }
+
+        const users = (await response.json()) as GatewayUser[];
+        const nextChats = users.map((user) => ({
+          id: user.userId,
+          name: user.displayName,
+          isOnline: user.isOnline,
+        }));
+
+        if (stopped) return;
+
+        setChats(nextChats);
+        setUsersError(null);
+        setSelectedChatId((current) =>
+          current && nextChats.some((chat) => chat.id === current)
+            ? current
+            : nextChats[0]?.id ?? null
+        );
+        setMessagesByChat((current) => {
+          const next = { ...current };
+
+          for (const chat of nextChats) {
+            next[chat.id] ??= [];
+          }
+
+          return next;
+        });
+      } catch (error) {
+        if (!stopped) {
+          setUsersError(
+            error instanceof Error ? error.message : 'Nutzer konnten nicht geladen werden.'
+          );
+        }
+      } finally {
+        if (!stopped) {
+          setIsLoadingUsers(false);
+        }
+      }
+    }
+
+    void loadUsers();
+    const refreshTimer = setInterval(loadUsers, 30000);
+
+    return () => {
+      stopped = true;
+      clearInterval(refreshTimer);
+    };
+  }, [session]);
   // =============================================================================
   // EINMALIGE ERFOLGSMELDUNG
   // Nur ein echter Login setzt loginSuccessPending auf true. Der Workspace zeigt
@@ -187,18 +243,17 @@ export default function ChatWorkspace() {
     return () => clearTimeout(timeout);
   }, [showLoginNotice]);
 
-  // Sucht aus der Chatliste das vollständige Objekt des ausgewählten Chats.
-  // chats[0] ist ein sicherer Fallback, falls eine ID einmal nicht gefunden wird.
+  // Sucht aus der echten Nutzerliste den aktuell ausgewählten Chat.
   const selectedChat = useMemo(
-    () => chats.find((chat) => chat.id === selectedChatId) ?? chats[0],
-    [selectedChatId]
+    () => chats.find((chat) => chat.id === selectedChatId),
+    [chats, selectedChatId]
   );
 
   // =============================================================================
   // BEDIENFUNKTIONEN
   // =============================================================================
 
-  function selectChat(chatId: ChatId) {
+  function selectChat(chatId: string) {
     setSelectedChatId(chatId);
     setShowChatOnCompactScreen(true);
   }
@@ -207,7 +262,7 @@ export default function ChatWorkspace() {
     const text = draft.trim();
     const socket = socketRef.current;
 
-    if (!text) {
+    if (!text || !selectedChatId) {
       return;
     }
 
@@ -230,7 +285,7 @@ export default function ChatWorkspace() {
     setMessagesByChat((current) => ({
       ...current,
       [selectedChatId]: [
-        ...current[selectedChatId],
+        ...(current[selectedChatId] ?? []),
         {
           id: `${selectedChatId}-${Date.now()}`,
           mine: true,
@@ -300,13 +355,22 @@ export default function ChatWorkspace() {
               </Pressable>
             </View>
 
-            {/* CHATLISTE: Alle lokalen Beispiel-Unterhaltungen. */}
+            {/* CHATLISTE: Echte Supabase-Nutzer und ihr Redis-Online-Status. */}
             <ScrollView
               contentContainerStyle={styles.chatList}
               showsVerticalScrollIndicator={false}
               style={styles.chatListScroller}
             >
               <Text style={styles.sectionLabel}>NACHRICHTEN</Text>
+              {isLoadingUsers && (
+                <ActivityIndicator color="#8b5cf6" style={styles.userListNotice} />
+              )}
+              {!isLoadingUsers && usersError && (
+                <Text style={styles.userListNotice}>{usersError}</Text>
+              )}
+              {!isLoadingUsers && !usersError && chats.length === 0 && (
+                <Text style={styles.userListNotice}>Noch keine anderen Nutzer gefunden.</Text>
+              )}
               {chats.map((chat) => {
                 // Markiert den aktuell ausgewählten Eintrag farblich.
                 const isActive = chat.id === selectedChatId;
@@ -324,22 +388,16 @@ export default function ChatWorkspace() {
                   >
                     <View style={styles.avatar}>
                       <Text style={styles.avatarText}>{chat.name.slice(0, 1)}</Text>
-                      {chat.status === 'Online' && <View style={styles.onlineDotSmall} />}
+                      {chat.isOnline && <View style={styles.onlineDotSmall} />}
                     </View>
                     <View style={styles.chatRowText}>
                       <View style={styles.chatRowTitleLine}>
                         <Text style={styles.chatName}>{chat.name}</Text>
-                        <Text style={styles.chatTime}>{chat.id === 'robin' ? '17:34' : '16:12'}</Text>
                       </View>
                       <Text numberOfLines={1} style={styles.chatPreview}>
-                        {chat.preview}
+                        {chat.isOnline ? 'Online' : 'Offline'}
                       </Text>
                     </View>
-                    {!!chat.unread && (
-                      <View style={styles.unreadBadge}>
-                        <Text style={styles.unreadText}>{chat.unread}</Text>
-                      </View>
-                    )}
                   </Pressable>
                 );
               })}
@@ -375,7 +433,7 @@ export default function ChatWorkspace() {
         )}
 
         {/* RECHTE SPALTE: Kopfzeile, Nachrichtenverlauf und Eingabefeld. */}
-        {showConversation && (
+        {showConversation && selectedChat && (
           <View style={styles.conversation}>
             {/* GESPRÄCHSKOPF: Zurück-Button mobil, Kontaktname und Status. */}
             <View style={styles.conversationHeader}>
@@ -390,7 +448,7 @@ export default function ChatWorkspace() {
               )}
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{selectedChat.name.slice(0, 1)}</Text>
-                {selectedChat.status === 'Online' && <View style={styles.onlineDotSmall} />}
+                {selectedChat.isOnline && <View style={styles.onlineDotSmall} />}
               </View>
               <View style={styles.conversationTitleBlock}>
                 <Text style={styles.conversationTitle}>{selectedChat.name}</Text>
@@ -398,10 +456,12 @@ export default function ChatWorkspace() {
                   <View
                     style={[
                       styles.statusDot,
-                      selectedChat.status !== 'Online' && styles.statusDotOffline,
+                      !selectedChat.isOnline && styles.statusDotOffline,
                     ]}
                   />
-                  <Text style={styles.conversationStatus}>{selectedChat.status}</Text>
+                  <Text style={styles.conversationStatus}>
+                    {selectedChat.isOnline ? 'Online' : 'Offline'}
+                  </Text>
                 </View>
               </View>
               <Pressable accessibilityLabel="Weitere Optionen" style={styles.moreButton}>
@@ -418,7 +478,7 @@ export default function ChatWorkspace() {
               <View style={styles.datePill}>
                 <Text style={styles.datePillText}>HEUTE</Text>
               </View>
-              {messagesByChat[selectedChatId].map((message) => (
+              {(messagesByChat[selectedChat.id] ?? []).map((message) => (
                 <View
                   key={message.id}
                   style={[
@@ -465,7 +525,7 @@ export default function ChatWorkspace() {
                 </Pressable>
               </View>
               <Text style={styles.composerHint}>
-                {Platform.OS === 'web' ? 'Nachrichten werden aktuell nur lokal angezeigt.' : 'Lokal gespeichert'}
+                Nachrichten werden über den Gateway gesendet.
               </Text>
             </View>
           </View>
@@ -636,6 +696,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1.3,
   },
+  userListNotice: {
+    marginVertical: 14,
+    paddingHorizontal: 9,
+    color: '#94a3b8',
+    fontSize: 13,
+  },
   chatRow: {
     minHeight: 78,
     paddingHorizontal: 12,
@@ -689,30 +755,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
-  chatTime: {
-    color: '#64748b',
-    fontSize: 11,
-  },
   chatPreview: {
     marginTop: 6,
     color: '#94a3b8',
     fontSize: 13,
   },
-  unreadBadge: {
-    minWidth: 21,
-    height: 21,
-    paddingHorizontal: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 11,
-    backgroundColor: '#8b5cf6',
-  },
-  unreadText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-
   // --- Angemeldetes Konto und Logout unten links ---
   accountCard: {
     minHeight: 86,
