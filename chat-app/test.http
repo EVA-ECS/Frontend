@@ -1,0 +1,14 @@
+@supabaseUrl = https://svjwdxhozkulzgxxyzce.supabase.co
+@supabaseAnonKey = sb_publishable_sPTid52Q5HDa4t3od4qb5Q_36YalKIm
+
+@email = test@outlook.de
+@password = 1234
+
+POST {{supabaseUrl}}/auth/v1/token?grant_type=password
+apikey: {{supabaseAnonKey}}
+Content-Type: application/json
+
+{
+    "email":"{{email}}",
+    "password":"{{password}}"
+}
