@@ -1,122 +1,337 @@
-// =============================================================================
-// AUTH-KONTEXT: GEMEINSAMER LOGIN-STATUS DER APP
-// Hier wird die Supabase-Session einmal zentral verwaltet und allen Seiten über
-// useAuth() bereitgestellt. Dadurch muss nicht jede Seite Supabase selbst prüfen.
-// =============================================================================
-
-import type { Session } from '@supabase/supabase-js';
 import React, {
   createContext,
   useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
+import { AppState } from 'react-native';
 
-import { supabase } from '../utils/supabase';
+import {
+  ApiError,
+  login,
+  logout,
+  refreshAuthSession,
+  type AuthSession,
+} from '../utils/api-client';
+import {
+  clearStoredSession,
+  loadStoredSession,
+  saveStoredSession,
+} from './session-storage';
 
-// Beschreibt alle Werte und Funktionen, die useAuth() zurückgeben darf.
 type AuthContextValue = {
-  // Markiert die einmalige Login-Meldung als bereits verarbeitet.
   consumeLoginSuccess: () => void;
-  // Ist true, solange die Session beim App-Start noch geprüft wird.
+  getValidAccessToken: () => Promise<string | null>;
   isLoading: boolean;
-  // Ist nur nach einem echten erfolgreichen Login kurzzeitig true.
   loginSuccessPending: boolean;
-  // Wird von der Loginseite nach erfolgreicher Supabase-Anmeldung aufgerufen.
-  markLoginSuccessful: () => void;
-  // Enthält Benutzer und Token; null bedeutet: nicht angemeldet.
-  session: Session | null;
+  session: AuthSession | null;
+  signIn: (
+    email: string,
+    password: string
+  ) => Promise<void>;
+  signOut: () => Promise<void>;
 };
 
-// undefined als Startwert hilft dabei, eine falsche Nutzung außerhalb des
-// AuthProviders früh mit einer verständlichen Fehlermeldung zu erkennen.
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const AuthContext =
+  createContext<AuthContextValue | undefined>(undefined);
 
-// =============================================================================
-// AUTH-PROVIDER: SESSION LADEN UND AKTUELL HALTEN
-// =============================================================================
-export function AuthProvider({ children }: { children: ReactNode }) {
-  // Zentraler Zustand für Session, Ladephase und einmalige Login-Rückmeldung.
-  const [session, setSession] = useState<Session | null>(null);
+const REFRESH_MARGIN_SECONDS = 60;
+
+export function AuthProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const [session, setSession] =
+    useState<AuthSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [loginSuccessPending, setLoginSuccessPending] = useState(false);
+  const [loginSuccessPending, setLoginSuccessPending] =
+    useState(false);
 
-  // Beim ersten Mount werden zwei Dinge eingerichtet:
-  // 1. onAuthStateChange reagiert zukünftig auf Login, Logout und Token-Refresh.
-  // 2. getSession liest die Session, die beim Start bereits vorhanden sein könnte.
-  useEffect(() => {
-    let isMounted = true;
+  const sessionRef = useRef<AuthSession | null>(null);
+  const refreshPromiseRef =
+    useRef<Promise<AuthSession | null> | null>(null);
 
-    // Dauerhafte Verbindung zu allen späteren Auth-Änderungen.
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (!isMounted) return;
-
+  const applySession = useCallback(
+    async (nextSession: AuthSession) => {
+      sessionRef.current = nextSession;
       setSession(nextSession);
-      setIsLoading(false);
-    });
+      await saveStoredSession(nextSession);
+    },
+    []
+  );
 
-    // Einmalige Prüfung direkt beim Start des Providers.
-    void supabase.auth.getSession().then(({ data }) => {
-      if (!isMounted) return;
+  const clearCurrentSession = useCallback(
+    async () => {
+      sessionRef.current = null;
+      setSession(null);
+      await clearStoredSession();
+    },
+    []
+  );
 
-      setSession(data.session);
-      setIsLoading(false);
-    });
+  const refreshCurrentSession = useCallback(
+    async (): Promise<AuthSession | null> => {
+      const currentSession = sessionRef.current;
 
-    // Cleanup: Beim Entfernen des Providers darf kein alter Listener weiterlaufen.
+      if (!currentSession) {
+        return null;
+      }
+
+      if (refreshPromiseRef.current) {
+        return refreshPromiseRef.current;
+      }
+
+      const refreshPromise = (async () => {
+        try {
+          const nextSession =
+            await refreshAuthSession(
+              currentSession.refreshToken
+            );
+
+          await applySession(nextSession);
+          return nextSession;
+        } catch (error) {
+          if (
+            error instanceof ApiError &&
+            error.status === 401
+          ) {
+            await clearCurrentSession();
+            return null;
+          }
+
+          throw error;
+        }
+      })();
+
+      refreshPromiseRef.current = refreshPromise;
+
+      try {
+        return await refreshPromise;
+      } finally {
+        if (
+          refreshPromiseRef.current === refreshPromise
+        ) {
+          refreshPromiseRef.current = null;
+        }
+      }
+    },
+    [applySession, clearCurrentSession]
+  );
+
+  const getValidAccessToken = useCallback(
+    async (): Promise<string | null> => {
+      const currentSession = sessionRef.current;
+
+      if (!currentSession) {
+        return null;
+      }
+
+      const now =
+        Math.floor(Date.now() / 1000);
+
+      if (
+        currentSession.expiresAt >
+        now + REFRESH_MARGIN_SECONDS
+      ) {
+        return currentSession.accessToken;
+      }
+
+      const refreshed =
+        await refreshCurrentSession();
+
+      return refreshed?.accessToken ?? null;
+    },
+    [refreshCurrentSession]
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    async function restoreSession() {
+      try {
+        const storedSession =
+          await loadStoredSession();
+
+        if (!active) {
+          return;
+        }
+
+        if (!storedSession) {
+          return;
+        }
+
+        sessionRef.current = storedSession;
+        setSession(storedSession);
+
+        const now =
+          Math.floor(Date.now() / 1000);
+
+        if (
+          storedSession.expiresAt <=
+          now + REFRESH_MARGIN_SECONDS
+        ) {
+          try {
+            await refreshCurrentSession();
+          } catch {
+            await clearCurrentSession();
+          }
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void restoreSession();
+
     return () => {
-      isMounted = false;
-      subscription.unsubscribe();
+      active = false;
     };
-  }, []);
+  }, [
+    clearCurrentSession,
+    refreshCurrentSession,
+  ]);
 
-  // =============================================================================
-  // EINMALIGE ERFOLGSMELDUNG NACH EINEM ECHTEN LOGIN
-  // Diese Funktionen verhindern, dass Fast Refresh die Meldung erneut auslöst.
-  // =============================================================================
-  const markLoginSuccessful = useCallback(() => {
-    setLoginSuccessPending(true);
-  }, []);
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    async function refreshWhenNecessary() {
+      const currentSession = sessionRef.current;
+
+      if (!currentSession) {
+        return;
+      }
+
+      const now =
+        Math.floor(Date.now() / 1000);
+
+      if (
+        currentSession.expiresAt <=
+        now + REFRESH_MARGIN_SECONDS
+      ) {
+        try {
+          await refreshCurrentSession();
+        } catch (error) {
+          console.warn(
+            'Session konnte nicht erneuert werden.',
+            error
+          );
+        }
+      }
+    }
+
+    void refreshWhenNecessary();
+
+    const interval = setInterval(
+      refreshWhenNecessary,
+      30000
+    );
+
+    return () => clearInterval(interval);
+  }, [session?.expiresAt, refreshCurrentSession]);
+
+  useEffect(() => {
+    const subscription =
+      AppState.addEventListener(
+        'change',
+        (state) => {
+          if (state === 'active') {
+            void getValidAccessToken().catch(
+              (error) => {
+                console.warn(
+                  'Sessionprüfung fehlgeschlagen.',
+                  error
+                );
+              }
+            );
+          }
+        }
+      );
+
+    return () => subscription.remove();
+  }, [getValidAccessToken]);
+
+  const signIn = useCallback(
+    async (
+      email: string,
+      password: string
+    ) => {
+      const nextSession = await login(
+        email,
+        password
+      );
+
+      await applySession(nextSession);
+      setLoginSuccessPending(true);
+    },
+    [applySession]
+  );
+
+  const signOut = useCallback(async () => {
+    const accessToken =
+      sessionRef.current?.accessToken;
+
+    try {
+      if (accessToken) {
+        await logout(accessToken);
+      }
+    } catch (error) {
+      console.warn(
+        'Server-Logout fehlgeschlagen; lokale Session wird trotzdem gelöscht.',
+        error
+      );
+    } finally {
+      await clearCurrentSession();
+    }
+  }, [clearCurrentSession]);
 
   const consumeLoginSuccess = useCallback(() => {
     setLoginSuccessPending(false);
   }, []);
 
-  // useMemo hält das Context-Objekt stabil und vermeidet unnötige Neuberechnungen.
   const value = useMemo(
     () => ({
       consumeLoginSuccess,
+      getValidAccessToken,
       isLoading,
       loginSuccessPending,
-      markLoginSuccessful,
       session,
+      signIn,
+      signOut,
     }),
     [
       consumeLoginSuccess,
+      getValidAccessToken,
       isLoading,
       loginSuccessPending,
-      markLoginSuccessful,
       session,
+      signIn,
+      signOut,
     ]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
-// =============================================================================
-// HILFS-HOOK FÜR SEITEN UND KOMPONENTEN
-// Beispiel: const { session } = useAuth();
-// =============================================================================
 export function useAuth() {
   const context = useContext(AuthContext);
 
   if (!context) {
-    throw new Error('useAuth muss innerhalb von AuthProvider verwendet werden.');
+    throw new Error(
+      'useAuth muss innerhalb von AuthProvider verwendet werden.'
+    );
   }
 
   return context;

@@ -1,6 +1,6 @@
 // =============================================================================
 // REGISTRIERUNGSSEITE
-// Diese Seite erstellt über Supabase ein neues Konto. Sie besitzt bewusst das
+// Diese Seite erstellt über Gateway und UserService ein neues Konto. Sie besitzt bewusst das
 // gleiche Design und die gleiche Rückmeldungslogik wie die Loginseite.
 // =============================================================================
 
@@ -17,7 +17,7 @@ import {
   View,
 } from 'react-native';
 
-import { supabase } from '../utils/supabase';
+import { registerAccount } from '../utils/api-client';
 
 // Einheitliches Format für rote Fehler- und grüne Erfolgsmeldungen.
 type Feedback = {
@@ -65,42 +65,30 @@ export default function RegisterScreen() {
     setFeedback(null);
     setLoading(true);
 
-    // 4. Neues Supabase-Konto anlegen.
-    const {
-      data: { session },
-      error,
-    } = await supabase.auth.signUp({
-      email: normalizedEmail,
-      password,
-    });
-
-    // 5. Supabase-Fehler direkt im Formular anzeigen.
-    if (error) {
-      setFeedback({ message: error.message, type: 'error' });
+    try {
+      const result = await registerAccount(
+        normalizedEmail.toLowerCase(),
+        password
+      );
+    
+      setFeedback({
+        message: result.message,
+        type: 'success',
+      });
+    
+      setPassword('');
+      setPasswordConfirmation('');
+    } catch (error) {
+      setFeedback({
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Die Registrierung ist fehlgeschlagen.',
+        type: 'error',
+      });
+    } finally {
       setLoading(false);
-      return;
     }
-
-    // 6. Wenn Supabase sofort eine Session erstellt, melden wir sie wieder lokal
-    // ab. Die Person soll sich anschließend bewusst über die Loginseite anmelden.
-    // Ohne Session muss normalerweise zuerst die Bestätigungs-E-Mail geöffnet werden.
-    if (session) {
-      await supabase.auth.signOut({ scope: 'local' });
-      setFeedback({
-        message: 'Registrierung erfolgreich. Du kannst dich jetzt anmelden.',
-        type: 'success',
-      });
-    } else {
-      setFeedback({
-        message: 'Registrierung erfolgreich. Bitte bestätige deine E-Mail-Adresse.',
-        type: 'success',
-      });
-    }
-
-    // 7. Passwörter nach erfolgreicher Registrierung aus dem Formular löschen.
-    setPassword('');
-    setPasswordConfirmation('');
-    setLoading(false);
   }
 
   return (
@@ -144,7 +132,7 @@ export default function RegisterScreen() {
           </View>
         )}
 
-        {/* EINGABEFELD 1: E-Mail des neuen Supabase-Kontos. */}
+        {/* EINGABEFELD 1: E-Mail des neuen Benutzerkontos. */}
         <View style={styles.inputContainer}>
           <Text style={styles.label}>E-Mail</Text>
           <TextInput
