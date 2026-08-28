@@ -1,7 +1,8 @@
 // =============================================================================
 // ROOT-LAYOUT: ZENTRALE NAVIGATION DER GESAMTEN APP
-// Diese Datei entscheidet anhand der Supabase-Session, welche Seiten erreichbar
-// sind. Sie ist der wichtigste Einstiegspunkt von Expo Router.
+// Diese Datei entscheidet anhand der Auth-Session, welche Seiten erreichbar sind.
+// Die Session wird vom AuthProvider verwaltet und dauerhaft gespeichert. 
+// Sie ist der wichtigste Einstiegspunkt von Expo Router.
 // =============================================================================
 
 import { Stack } from 'expo-router';

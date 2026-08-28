@@ -1,7 +1,7 @@
 // =============================================================================
 // LOGINSEITE
-// Diese Seite sammelt E-Mail und Passwort, prüft die Daten über Supabase und
-// übergibt bei Erfolg an den geschützten Chat-Bereich.
+// Diese Seite sammelt E-Mail und Passwort und sendet sie über das Gateway
+// an den UserService. Bei Erfolg wird der geschützte Chat-Bereich geöffnet.
 // =============================================================================
 
 import React, { useState } from 'react';
@@ -18,7 +18,6 @@ import {
 } from 'react-native';
 
 import { useAuth } from '../auth/auth-context';
-import { supabase } from '../utils/supabase';
 
 // Einheitliches Format für rote Fehler- und grüne Erfolgsmeldungen.
 type Feedback = {
@@ -32,7 +31,7 @@ export default function SignInScreen() {
   // =============================================================================
   // Diese Context-Funktion sorgt dafür, dass der Chat die Erfolgsmeldung nur
   // nach einem echten Login und nicht nach jedem Fast Refresh zeigt.
-  const { markLoginSuccessful } = useAuth();
+  const { signIn } = useAuth();
 
   // Eingabefelder, Ladezustand des Buttons und sichtbare Rückmeldung.
   const [email, setEmail] = useState('');
@@ -57,24 +56,22 @@ export default function SignInScreen() {
     setFeedback(null);
     setLoading(true);
 
-    // 3. Supabase prüft E-Mail und Passwort.
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-
-    // 4. Fehler bleiben auf der Loginseite; Erfolg aktiviert einmalig den Toast
-    // im Chat. Die geschützte Route wechselt durch die neue Session automatisch.
-    if (error) {
+    try {
+      await signIn(
+        email.trim().toLowerCase(),
+        password
+      );
+    } catch (error) {
       setFeedback({
-        message: 'E-Mail-Adresse oder Passwort ist falsch.',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Die Anmeldung ist fehlgeschlagen.',
         type: 'error',
       });
-    } else {
-      markLoginSuccessful();
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }
 
   return (

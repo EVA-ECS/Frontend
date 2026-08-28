@@ -19,7 +19,10 @@ import {
 } from 'react-native';
 
 import { useAuth } from '../auth/auth-context';
-import { supabase } from '../utils/supabase';
+import {
+  GATEWAY_WS_URL,
+  getUsers,
+} from '../utils/api-client';
 
 // =============================================================================
 // DATENTYPEN
@@ -30,13 +33,6 @@ import { supabase } from '../utils/supabase';
 type ChatPreview = {
   id: string;
   name: string;
-  isOnline: boolean;
-};
-
-// Nutzerformat, das der Gateway aus den echten Supabase-Nutzern liefert.
-type GatewayUser = {
-  userId: string;
-  displayName: string;
   isOnline: boolean;
 };
 
@@ -53,7 +49,13 @@ type ChatMessage = {
 // =============================================================================
 export default function ChatWorkspace() {
   const { width } = useWindowDimensions();
-  const { consumeLoginSuccess, loginSuccessPending, session } = useAuth();
+  const {
+    consumeLoginSuccess,
+    getValidAccessToken,
+    loginSuccessPending,
+    session,
+    signOut: endSession,
+  } = useAuth();
   const isCompact = width < 760;
 
   const [chats, setChats] = useState<ChatPreview[]>([]);
@@ -74,154 +76,238 @@ export default function ChatWorkspace() {
     if (!session) {
       return;
     }
-
-    // Traefik nimmt die Verbindung auf Port 80 an und leitet sie zum Gateway weiter.
-    const gatewayUrl = 'ws://localhost/ws';
-    const accessToken = session.access_token;
+  
+    // Traefik nimmt die Verbindung auf Port 80 an und leitet
+    // den Pfad /ws an das Gateway weiter.
+    const gatewayUrl = `${GATEWAY_WS_URL}/ws`;
+  
     let socket: WebSocket | null = null;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    let retryTimer:
+      | ReturnType<typeof setTimeout>
+      | undefined;
+    let heartbeatTimer:
+      | ReturnType<typeof setInterval>
+      | undefined;
     let stopped = false;
-
+  
     function stopHeartbeat() {
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
         heartbeatTimer = undefined;
       }
     }
-
+  
     function sendHeartbeat() {
       if (socket?.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'presence.heartbeat' }));
+        socket.send(
+          JSON.stringify({
+            type: 'presence.heartbeat',
+          })
+        );
       }
     }
-
-    function connect() {
-      socket = new WebSocket(
-        `${gatewayUrl}?access_token=${encodeURIComponent(
-          accessToken
-        )}`
-      );
-
-      socket.onopen = () => {
-        console.log('WebSocket mit Gateway verbunden');
-        sendHeartbeat();
-        stopHeartbeat();
-        heartbeatTimer = setInterval(sendHeartbeat, 30000);
-      };
-
-      socket.onmessage = (event) => {
-        const response = JSON.parse(event.data);
-
-        console.log(
-          'Antwort vom Gateway:',
-          response
-        );
-      };
-
-      socket.onerror = () => {
-        console.warn(
-          'WebSocket-Verbindung fehlgeschlagen'
-        );
-      };
-
-      socket.onclose = () => {
-        stopHeartbeat();
-        socketRef.current = null;
-        console.log('WebSocket geschlossen');
-
-        if (!stopped) {
-          retryTimer = setTimeout(connect, 2000);
-        }
-      };
-
-      socketRef.current = socket;
+  
+    function scheduleReconnect() {
+      if (stopped || retryTimer) {
+        return;
+      }
+  
+      retryTimer = setTimeout(() => {
+        retryTimer = undefined;
+        void connect();
+      }, 2000);
     }
-
-    connect();
-
+  
+    async function connect() {
+      try {
+        const accessToken =
+          await getValidAccessToken();
+  
+        if (stopped || !accessToken) {
+          return;
+        }
+  
+        socket = new WebSocket(
+          `${gatewayUrl}?access_token=${encodeURIComponent(
+            accessToken
+          )}`
+        );
+  
+        socketRef.current = socket;
+  
+        socket.onopen = () => {
+          console.log(
+            'WebSocket mit Gateway verbunden'
+          );
+  
+          stopHeartbeat();
+          sendHeartbeat();
+  
+          heartbeatTimer = setInterval(
+            sendHeartbeat,
+            30000
+          );
+        };
+  
+        socket.onmessage = (event) => {
+          try {
+            const response = JSON.parse(event.data);
+  
+            console.log(
+              'Antwort vom Gateway:',
+              response
+            );
+          } catch {
+            console.warn(
+              'Ungültige WebSocket-Nachricht empfangen'
+            );
+          }
+        };
+  
+        socket.onerror = () => {
+          console.warn(
+            'WebSocket-Verbindung fehlgeschlagen'
+          );
+        };
+  
+        socket.onclose = () => {
+          stopHeartbeat();
+  
+          if (socketRef.current === socket) {
+            socketRef.current = null;
+          }
+  
+          console.log('WebSocket geschlossen');
+          scheduleReconnect();
+        };
+      } catch (error) {
+        console.warn(
+          'WebSocket konnte nicht aufgebaut werden.',
+          error
+        );
+  
+        scheduleReconnect();
+      }
+    }
+  
+    void connect();
+  
     return () => {
       stopped = true;
-
+  
       if (retryTimer) {
         clearTimeout(retryTimer);
+        retryTimer = undefined;
       }
-
+  
       stopHeartbeat();
       socket?.close();
-      socketRef.current = null;
+  
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
     };
-  }, [session?.access_token]);
+  }, [
+    getValidAccessToken,
+    session?.accessToken,
+  ]);
 
-  // Lädt die echten Supabase-Nutzer samt Online-Status vom Gateway.
+  // Lädt die Nutzer über Gateway und UserService.
+  // Der UserService ergänzt den Online-Status aus Redis.
   useEffect(() => {
     if (!session) {
       setChats([]);
       setSelectedChatId(null);
+      setUsersError(null);
       setIsLoadingUsers(false);
       return;
     }
-
+  
     let stopped = false;
-
+    let requestRunning = false;
+  
+    setIsLoadingUsers(true);
+  
     async function loadUsers() {
+      if (requestRunning) {
+        return;
+      }
+  
+      requestRunning = true;
+  
       try {
-        const response = await fetch('http://localhost/api/users', {
-          headers: {
-            Authorization: `Bearer ${session?.access_token}`,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`Gateway antwortet mit ${response.status}`);
+        const accessToken =
+          await getValidAccessToken();
+  
+        if (stopped || !accessToken) {
+          return;
         }
-
-        const users = (await response.json()) as GatewayUser[];
-        const nextChats = users.map((user) => ({
-          id: user.userId,
-          name: user.displayName,
-          isOnline: user.isOnline,
-        }));
-
-        if (stopped) return;
-
+  
+        const users = await getUsers(accessToken);
+  
+        if (stopped) {
+          return;
+        }
+  
+        const nextChats: ChatPreview[] =
+          users.map((user) => ({
+            id: user.userId,
+            name: user.displayName,
+            isOnline: user.isOnline,
+          }));
+  
         setChats(nextChats);
         setUsersError(null);
+  
         setSelectedChatId((current) =>
-          current && nextChats.some((chat) => chat.id === current)
+          current &&
+          nextChats.some(
+            (chat) => chat.id === current
+          )
             ? current
             : nextChats[0]?.id ?? null
         );
+  
         setMessagesByChat((current) => {
           const next = { ...current };
-
+  
           for (const chat of nextChats) {
             next[chat.id] ??= [];
           }
-
+  
           return next;
         });
       } catch (error) {
         if (!stopped) {
           setUsersError(
-            error instanceof Error ? error.message : 'Nutzer konnten nicht geladen werden.'
+            error instanceof Error
+              ? error.message
+              : 'Nutzer konnten nicht geladen werden.'
           );
         }
       } finally {
+        requestRunning = false;
+  
         if (!stopped) {
           setIsLoadingUsers(false);
         }
       }
     }
-
+  
     void loadUsers();
-    const refreshTimer = setInterval(loadUsers, 30000);
-
+  
+    const refreshTimer = setInterval(() => {
+      void loadUsers();
+    }, 30000);
+  
     return () => {
       stopped = true;
       clearInterval(refreshTimer);
     };
-  }, [session]);
+  }, [
+    getValidAccessToken,
+    session?.accessToken,
+  ]);
   // =============================================================================
   // EINMALIGE ERFOLGSMELDUNG
   // Nur ein echter Login setzt loginSuccessPending auf true. Der Workspace zeigt
@@ -298,14 +384,22 @@ export default function ChatWorkspace() {
     setDraft('');
   }
 
-  // Beendet die lokale Supabase-Session. Das Root-Layout erkennt session = null
-  // und leitet automatisch zurück zur Loginseite.
+  // Meldet den Nutzer über Gateway und UserService ab.
+  // Anschließend löscht der Auth-Context die lokal gespeicherte Session.
+  // Das Root-Layout leitet danach automatisch zur Loginseite.
   async function signOut() {
     setIsSigningOut(true);
-    const { error } = await supabase.auth.signOut({ scope: 'local' });
-
-    if (error) {
-      Alert.alert('Fehler beim Logout', error.message);
+  
+    try {
+      await endSession();
+    } catch (error) {
+      Alert.alert(
+        'Fehler beim Logout',
+        error instanceof Error
+          ? error.message
+          : 'Die Abmeldung ist fehlgeschlagen.'
+      );
+  
       setIsSigningOut(false);
     }
   }
@@ -355,7 +449,7 @@ export default function ChatWorkspace() {
               </Pressable>
             </View>
 
-            {/* CHATLISTE: Echte Supabase-Nutzer und ihr Redis-Online-Status. */}
+            {/* CHATLISTE: Nutzer aus dem UserService mit Redis-Online-Status. */}
             <ScrollView
               contentContainerStyle={styles.chatList}
               showsVerticalScrollIndicator={false}
