@@ -24,6 +24,12 @@ import {
   getUsers,
 } from '../utils/api-client';
 
+import {
+  encryptMessageForUser,
+  ensureE2eeIdentity,
+  type LocalE2eeIdentity,
+} from '../e2ee/e2ee';
+
 // =============================================================================
 // DATENTYPEN
 // Diese Typen legen fest, wie Chats und Nachrichten im Frontend aufgebaut sind.
@@ -71,6 +77,26 @@ export default function ChatWorkspace() {
   const [showLoginNotice, setShowLoginNotice] = useState(false);
 
   const socketRef = useRef<WebSocket | null>(null);
+
+  const [
+    e2eeIdentity,
+    setE2eeIdentity,
+  ] =
+    useState<
+      LocalE2eeIdentity | null
+    >(null);
+  
+  const [
+    e2eeError,
+    setE2eeError,
+  ] =
+    useState<string | null>(null);
+  
+  const [
+    isSendingMessage,
+    setIsSendingMessage,
+  ] =
+    useState(false);
 
   useEffect(() => {
     if (!session) {
@@ -212,6 +238,62 @@ export default function ChatWorkspace() {
     session?.accessToken,
   ]);
 
+  useEffect(() => {
+    const userId =
+      session?.user.userId;
+  
+    if (!userId) {
+      setE2eeIdentity(null);
+      setE2eeError(null);
+      return;
+    }
+  
+    let cancelled = false;
+  
+    async function initializeE2ee() {
+      try {
+        const accessToken =
+          await getValidAccessToken();
+  
+        if (!accessToken) {
+          throw new Error(
+            'Die Sitzung ist abgelaufen.'
+          );
+        }
+  
+        const identity =
+          await ensureE2eeIdentity(
+            userId!,
+            accessToken
+          );
+  
+        if (!cancelled) {
+          setE2eeIdentity(identity);
+          setE2eeError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setE2eeIdentity(null);
+  
+          setE2eeError(
+            error instanceof Error
+              ? error.message
+              : 'E2EE konnte nicht initialisiert werden.'
+          );
+        }
+      }
+    }
+  
+    void initializeE2ee();
+  
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    getValidAccessToken,
+    session?.user.userId,
+  ]);
+
   // Lädt die Nutzer über Gateway und UserService.
   // Der UserService ergänzt den Online-Status aus Redis.
   useEffect(() => {
@@ -344,44 +426,101 @@ export default function ChatWorkspace() {
     setShowChatOnCompactScreen(true);
   }
 
-  function sendMessage() {
-    const text = draft.trim();
+  async function sendMessage() {
+    const plaintext = draft.trim();
     const socket = socketRef.current;
-
-    if (!text || !selectedChatId) {
+  
+    if (
+      !plaintext ||
+      !selectedChatId
+    ) {
       return;
     }
-
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
+  
+    if (!e2eeIdentity) {
+      Alert.alert(
+        'E2EE nicht bereit',
+        e2eeError ??
+          'Der lokale Schlüssel wird noch vorbereitet.'
+      );
+  
+      return;
+    }
+  
+    if (
+      !socket ||
+      socket.readyState !==
+        WebSocket.OPEN
+    ) {
       Alert.alert(
         'Keine Verbindung',
         'Der Gateway ist momentan nicht verbunden.'
       );
-
+  
       return;
     }
-
-    socket.send(
-      JSON.stringify({
-        targetId: selectedChatId,
-        text,
-      })
-    );
-
-    setMessagesByChat((current) => ({
-      ...current,
-      [selectedChatId]: [
-        ...(current[selectedChatId] ?? []),
-        {
-          id: `${selectedChatId}-${Date.now()}`,
-          mine: true,
-          text,
-          time: 'Jetzt',
-        },
-      ],
-    }));
-
-    setDraft('');
+  
+    setIsSendingMessage(true);
+  
+    try {
+      const accessToken =
+        await getValidAccessToken();
+  
+      if (!accessToken) {
+        throw new Error(
+          'Die Sitzung ist abgelaufen.'
+        );
+      }
+  
+      const ciphertext =
+        await encryptMessageForUser(
+          e2eeIdentity,
+          selectedChatId,
+          plaintext,
+          accessToken
+        );
+  
+      socket.send(
+        JSON.stringify({
+          targetId: selectedChatId,
+  
+          // Im Feld text steht nur noch
+          // der verschlüsselte Container.
+          text: ciphertext,
+        })
+      );
+  
+      // Der eigene Klartext wird nur
+      // lokal für die Oberfläche genutzt.
+      setMessagesByChat(
+        (current) => ({
+          ...current,
+          [selectedChatId]: [
+            ...(current[
+              selectedChatId
+            ] ?? []),
+            {
+              id:
+                `${selectedChatId}-${Date.now()}`,
+              mine: true,
+              text: plaintext,
+              time: 'Jetzt',
+            },
+          ],
+        })
+      );
+  
+      setDraft('');
+    } catch (error) {
+      Alert.alert(
+        'Nachricht nicht gesendet',
+        error instanceof Error
+          ? error.message
+          : 'Die Verschlüsselung ist fehlgeschlagen.'
+      );
+    } finally {
+      setIsSendingMessage(false);
+    }
   }
 
   // Meldet den Nutzer über Gateway und UserService ab.
@@ -607,8 +746,14 @@ export default function ChatWorkspace() {
                 />
                 <Pressable
                   accessibilityLabel="Nachricht senden"
-                  disabled={!draft.trim()}
-                  onPress={sendMessage}
+                  disabled={
+                    !draft.trim() ||
+                    !e2eeIdentity ||
+                    isSendingMessage
+                  }
+                  onPress={() =>
+                    void sendMessage()
+                  }
                   style={({ pressed }) => [
                     styles.sendButton,
                     !draft.trim() && styles.sendButtonDisabled,
@@ -619,7 +764,11 @@ export default function ChatWorkspace() {
                 </Pressable>
               </View>
               <Text style={styles.composerHint}>
-                Nachrichten werden über den Gateway gesendet.
+              {e2eeError
+                ? `E2EE-Fehler: ${e2eeError}`
+                : e2eeIdentity
+                  ? 'Nachrichten werden vor dem Senden lokal verschlüsselt.'
+                  : 'E2EE-Schlüssel wird vorbereitet …'}
               </Text>
             </View>
           </View>
