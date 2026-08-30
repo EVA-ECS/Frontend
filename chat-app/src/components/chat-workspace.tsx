@@ -5,10 +5,9 @@
 // Auf kleinen Displays werden Chatliste und Unterhaltung nacheinander angezeigt.
 // =============================================================================
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -50,6 +49,12 @@ type ChatMessage = {
   time: string;
 };
 
+type ToastNotice = {
+  title: string;
+  message: string;
+  kind: 'success' | 'error';
+};
+
 // =============================================================================
 // HAUPTKOMPONENTE DES CHAT-WORKSPACES
 // =============================================================================
@@ -74,7 +79,12 @@ export default function ChatWorkspace() {
 
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [showChatOnCompactScreen, setShowChatOnCompactScreen] = useState(false);
-  const [showLoginNotice, setShowLoginNotice] = useState(false);
+  const [toast, setToast] = useState<ToastNotice | null>(null);
+
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const socketUnavailableRef = useRef(false);
+  const usersUnavailableRef = useRef(false);
 
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -97,6 +107,38 @@ export default function ChatWorkspace() {
     setIsSendingMessage,
   ] =
     useState(false);
+
+    const showToast = useCallback(
+      (
+        title: string,
+        message: string,
+        kind: ToastNotice['kind'] = 'error'
+      ) => {
+        if (toastTimeoutRef.current) {
+          clearTimeout(toastTimeoutRef.current);
+        }
+    
+        setToast({
+          title,
+          message,
+          kind,
+        });
+    
+        toastTimeoutRef.current = setTimeout(() => {
+          setToast(null);
+          toastTimeoutRef.current = null;
+        }, 5000);
+      },
+      []
+    );
+    
+    useEffect(() => {
+      return () => {
+        if (toastTimeoutRef.current) {
+          clearTimeout(toastTimeoutRef.current);
+        }
+      };
+    }, []);
 
   useEffect(() => {
     if (!session) {
@@ -143,6 +185,20 @@ export default function ChatWorkspace() {
         void connect();
       }, 2000);
     }
+
+    function reportSocketUnavailable() {
+      if (socketUnavailableRef.current) {
+        return;
+      }
+    
+      socketUnavailableRef.current = true;
+    
+      showToast(
+        'Chatserver nicht erreichbar',
+        'Die Verbindung wird automatisch erneut versucht.',
+        'error'
+      );
+    }
   
     async function connect() {
       try {
@@ -162,6 +218,18 @@ export default function ChatWorkspace() {
         socketRef.current = socket;
   
         socket.onopen = () => {
+          const wasUnavailable = socketUnavailableRef.current;
+      
+          socketUnavailableRef.current = false;
+      
+          if (wasUnavailable) {
+            showToast(
+              'Verbindung wiederhergestellt',
+              'Der Chatserver ist wieder erreichbar.',
+              'success'
+            );
+          }
+
           console.log(
             'WebSocket mit Gateway verbunden'
           );
@@ -194,24 +262,30 @@ export default function ChatWorkspace() {
           console.warn(
             'WebSocket-Verbindung fehlgeschlagen'
           );
+
+          reportSocketUnavailable();
         };
   
-        socket.onclose = () => {
+        socket.onclose = () => { 
           stopHeartbeat();
-  
+        
           if (socketRef.current === socket) {
             socketRef.current = null;
           }
-  
+        
           console.log('WebSocket geschlossen');
-          scheduleReconnect();
+        
+          if (!stopped) {
+            reportSocketUnavailable();
+            scheduleReconnect();
+          }
         };
       } catch (error) {
         console.warn(
           'WebSocket konnte nicht aufgebaut werden.',
           error
         );
-  
+        reportSocketUnavailable();
         scheduleReconnect();
       }
     }
@@ -236,6 +310,7 @@ export default function ChatWorkspace() {
   }, [
     getValidAccessToken,
     session?.accessToken,
+    showToast,
   ]);
 
   useEffect(() => {
@@ -389,6 +464,7 @@ export default function ChatWorkspace() {
   }, [
     getValidAccessToken,
     session?.accessToken,
+    showToast,
   ]);
   // =============================================================================
   // EINMALIGE ERFOLGSMELDUNG
@@ -397,19 +473,22 @@ export default function ChatWorkspace() {
   // erneut auslösen kann.
   // =============================================================================
   useEffect(() => {
-    if (!loginSuccessPending) return;
-
-    setShowLoginNotice(true);
+    if (!loginSuccessPending) {
+      return;
+    }
+  
+    showToast(
+      'Anmeldung erfolgreich',
+      'Willkommen zurück im EVA Chat.',
+      'success'
+    );
+  
     consumeLoginSuccess();
-  }, [consumeLoginSuccess, loginSuccessPending]);
-
-  // Sobald der Toast sichtbar ist, wird er nach fünf Sekunden ausgeblendet.
-  useEffect(() => {
-    if (!showLoginNotice) return;
-
-    const timeout = setTimeout(() => setShowLoginNotice(false), 5000);
-    return () => clearTimeout(timeout);
-  }, [showLoginNotice]);
+  }, [
+    consumeLoginSuccess,
+    loginSuccessPending,
+    showToast,
+  ]);
 
   // Sucht aus der echten Nutzerliste den aktuell ausgewählten Chat.
   const selectedChat = useMemo(
