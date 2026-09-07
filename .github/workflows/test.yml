@@ -19,7 +19,9 @@ jobs:
                   node-version: "24"
 
             - name: Abhängigkeiten installieren
+              working-directory: Frontend/chat-app
               run: npm install --legacy-peer-deps
 
             - name: Test-Suite ausführen
+              working-directory: Frontend/chat-app
               run: npm test
