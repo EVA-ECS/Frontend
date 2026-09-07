@@ -8,6 +8,9 @@ on:
 jobs:
     test:
         runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: chat-app
 
         steps:
             - name: Repository auschecken
@@ -19,9 +22,7 @@ jobs:
                   node-version: "24"
 
             - name: Abhängigkeiten installieren
-              working-directory: Frontend/chat-app
               run: npm install --legacy-peer-deps
 
             - name: Test-Suite ausführen
-              working-directory: Frontend/chat-app
               run: npm test
