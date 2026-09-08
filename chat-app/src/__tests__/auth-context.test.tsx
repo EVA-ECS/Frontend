@@ -46,7 +46,6 @@ describe('AuthContext', () => {
         }
 
         expect(error).toBeInstanceOf(Error);
-        // Prüft, dass ein Fehler geworfen wurde (entweder von React oder deinem Code)
         expect(error).toBeDefined();
 
         consoleError.mockRestore();
@@ -81,7 +80,6 @@ describe('AuthContext', () => {
             <AuthProvider>{children}</AuthProvider>
         );
 
-        // HIER: await vor renderHook
         const { result } = await renderHook(() => useAuth(), { wrapper });
 
         await waitFor(() => expect(result.current.session).toEqual(mockSession));

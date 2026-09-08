@@ -8,7 +8,6 @@ module.exports = {
   transformIgnorePatterns: [
     'node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg)',
   ],
-  // Leitet das fehlende setup-env direkt auf eine leere oder existierende Jest-Setup-Datei um
   moduleNameMapper: {
     '^react-native/setup-env$': '<rootDir>/node_modules/@react-native/jest-preset/jest/setup.js',
   },

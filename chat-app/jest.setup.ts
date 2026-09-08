@@ -1,6 +1,5 @@
 import '@testing-library/jest-native/extend-expect';
 
-// Globale Mocks für Expo-Router und SecureStore
 jest.mock('expo-router', () => ({
     router: {
         push: jest.fn(),
