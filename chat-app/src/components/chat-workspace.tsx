@@ -405,6 +405,8 @@ export default function ChatWorkspace() {
         if (stopped) {
           return;
         }
+
+        usersUnavailableRef.current = false;
   
         const nextChats: ChatPreview[] =
           users.map((user) => ({
@@ -436,11 +438,22 @@ export default function ChatWorkspace() {
         });
       } catch (error) {
         if (!stopped) {
-          setUsersError(
+          const message =
             error instanceof Error
               ? error.message
-              : 'Nutzer konnten nicht geladen werden.'
-          );
+              : 'Nutzer konnten nicht geladen werden.';
+      
+          setUsersError(message);
+      
+          if (!usersUnavailableRef.current) {
+            usersUnavailableRef.current = true;
+      
+            showToast(
+              'Serverfehler',
+              'Die Nutzerliste konnte nicht geladen werden.',
+              'error'
+            );
+          }
         }
       } finally {
         requestRunning = false;
@@ -517,10 +530,11 @@ export default function ChatWorkspace() {
     }
   
     if (!e2eeIdentity) {
-      Alert.alert(
+      showToast(
         'E2EE nicht bereit',
         e2eeError ??
-          'Der lokale Schlüssel wird noch vorbereitet.'
+          'Der lokale Schlüssel wird noch vorbereitet.',
+        'error'
       );
   
       return;
@@ -531,9 +545,10 @@ export default function ChatWorkspace() {
       socket.readyState !==
         WebSocket.OPEN
     ) {
-      Alert.alert(
+      showToast(
         'Keine Verbindung',
-        'Der Gateway ist momentan nicht verbunden.'
+        'Der Chatserver ist momentan nicht verbunden.',
+        'error'
       );
   
       return;
@@ -591,11 +606,12 @@ export default function ChatWorkspace() {
   
       setDraft('');
     } catch (error) {
-      Alert.alert(
+      showToast(
         'Nachricht nicht gesendet',
         error instanceof Error
           ? error.message
-          : 'Die Verschlüsselung ist fehlgeschlagen.'
+          : 'Die Verschlüsselung ist fehlgeschlagen.',
+        'error'
       );
     } finally {
       setIsSendingMessage(false);
@@ -611,11 +627,12 @@ export default function ChatWorkspace() {
     try {
       await endSession();
     } catch (error) {
-      Alert.alert(
+      showToast(
         'Fehler beim Logout',
         error instanceof Error
           ? error.message
-          : 'Die Abmeldung ist fehlgeschlagen.'
+          : 'Die Abmeldung ist fehlgeschlagen.',
+        'error'
       );
   
       setIsSigningOut(false);
@@ -634,14 +651,47 @@ export default function ChatWorkspace() {
       {/* =====================================================================
           LOGIN-TOAST: Erscheint genau einmal nach erfolgreicher Anmeldung.
           ===================================================================== */}
-      {showLoginNotice && (
-        <View pointerEvents="none" style={styles.loginToast}>
-          <View style={styles.loginToastIcon}>
-            <Text style={styles.loginToastIconText}>✓</Text>
+      {toast && (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.loginToast,
+            toast.kind === 'error' &&
+              styles.errorToast,
+          ]}
+        >
+          <View
+            style={[
+              styles.loginToastIcon,
+              toast.kind === 'error' &&
+                styles.errorToastIcon,
+            ]}
+          >
+            <Text style={styles.loginToastIconText}>
+              {toast.kind === 'success' ? '✓' : '!'}
+            </Text>
           </View>
-          <View>
-            <Text style={styles.loginToastTitle}>Anmeldung erfolgreich</Text>
-            <Text style={styles.loginToastText}>Willkommen zurück im EVA Chat.</Text>
+
+          <View style={styles.toastContent}>
+            <Text
+              style={[
+                styles.loginToastTitle,
+                toast.kind === 'error' &&
+                  styles.errorToastTitle,
+              ]}
+            >
+              {toast.title}
+            </Text>
+
+            <Text
+              style={[
+                styles.loginToastText,
+                toast.kind === 'error' &&
+                  styles.errorToastText,
+              ]}
+            >
+              {toast.message}
+            </Text>
           </View>
         </View>
       )}
@@ -916,6 +966,27 @@ const styles = StyleSheet.create({
     marginTop: 3,
     color: '#86efac',
     fontSize: 11,
+  },
+  
+  toastContent: {
+    flex: 1,
+  },
+  
+  errorToast: {
+    borderColor: '#991b1b',
+    backgroundColor: '#450a0a',
+  },
+  
+  errorToastIcon: {
+    backgroundColor: '#dc2626',
+  },
+  
+  errorToastTitle: {
+    color: '#fecaca',
+  },
+  
+  errorToastText: {
+    color: '#fca5a5',
   },
 
   // --- Gemeinsamer Rahmen für Sidebar und Gespräch ---
