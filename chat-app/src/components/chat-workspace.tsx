@@ -5,9 +5,16 @@
 // Auf kleinen Displays werden Chatliste und Unterhaltung nacheinander angezeigt.
 // =============================================================================
 
+<<<<<<< HEAD
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+=======
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+>>>>>>> origin/main
   Pressable,
   ScrollView,
   StyleSheet,
@@ -23,12 +30,15 @@ import {
   getUsers,
 } from '../utils/api-client';
 
+<<<<<<< HEAD
 import {
   encryptMessageForUser,
   ensureE2eeIdentity,
   type LocalE2eeIdentity,
 } from '../e2ee/e2ee';
 
+=======
+>>>>>>> origin/main
 // =============================================================================
 // DATENTYPEN
 // Diese Typen legen fest, wie Chats und Nachrichten im Frontend aufgebaut sind.
@@ -49,12 +59,15 @@ type ChatMessage = {
   time: string;
 };
 
+<<<<<<< HEAD
 type ToastNotice = {
   title: string;
   message: string;
   kind: 'success' | 'error';
 };
 
+=======
+>>>>>>> origin/main
 // =============================================================================
 // HAUPTKOMPONENTE DES CHAT-WORKSPACES
 // =============================================================================
@@ -79,6 +92,7 @@ export default function ChatWorkspace() {
 
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [showChatOnCompactScreen, setShowChatOnCompactScreen] = useState(false);
+<<<<<<< HEAD
   const [toast, setToast] = useState<ToastNotice | null>(null);
 
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -140,6 +154,12 @@ export default function ChatWorkspace() {
       };
     }, []);
 
+=======
+  const [showLoginNotice, setShowLoginNotice] = useState(false);
+
+  const socketRef = useRef<WebSocket | null>(null);
+
+>>>>>>> origin/main
   useEffect(() => {
     if (!session) {
       return;
@@ -185,6 +205,7 @@ export default function ChatWorkspace() {
         void connect();
       }, 2000);
     }
+<<<<<<< HEAD
 
     function reportSocketUnavailable() {
       if (socketUnavailableRef.current) {
@@ -199,6 +220,8 @@ export default function ChatWorkspace() {
         'error'
       );
     }
+=======
+>>>>>>> origin/main
   
     async function connect() {
       try {
@@ -218,6 +241,7 @@ export default function ChatWorkspace() {
         socketRef.current = socket;
   
         socket.onopen = () => {
+<<<<<<< HEAD
           const wasUnavailable = socketUnavailableRef.current;
       
           socketUnavailableRef.current = false;
@@ -230,6 +254,8 @@ export default function ChatWorkspace() {
             );
           }
 
+=======
+>>>>>>> origin/main
           console.log(
             'WebSocket mit Gateway verbunden'
           );
@@ -262,6 +288,7 @@ export default function ChatWorkspace() {
           console.warn(
             'WebSocket-Verbindung fehlgeschlagen'
           );
+<<<<<<< HEAD
 
           reportSocketUnavailable();
         };
@@ -279,13 +306,30 @@ export default function ChatWorkspace() {
             reportSocketUnavailable();
             scheduleReconnect();
           }
+=======
+        };
+  
+        socket.onclose = () => {
+          stopHeartbeat();
+  
+          if (socketRef.current === socket) {
+            socketRef.current = null;
+          }
+  
+          console.log('WebSocket geschlossen');
+          scheduleReconnect();
+>>>>>>> origin/main
         };
       } catch (error) {
         console.warn(
           'WebSocket konnte nicht aufgebaut werden.',
           error
         );
+<<<<<<< HEAD
         reportSocketUnavailable();
+=======
+  
+>>>>>>> origin/main
         scheduleReconnect();
       }
     }
@@ -310,6 +354,7 @@ export default function ChatWorkspace() {
   }, [
     getValidAccessToken,
     session?.accessToken,
+<<<<<<< HEAD
     showToast,
   ]);
 
@@ -367,6 +412,8 @@ export default function ChatWorkspace() {
   }, [
     getValidAccessToken,
     session?.user.userId,
+=======
+>>>>>>> origin/main
   ]);
 
   // Lädt die Nutzer über Gateway und UserService.
@@ -405,8 +452,11 @@ export default function ChatWorkspace() {
         if (stopped) {
           return;
         }
+<<<<<<< HEAD
 
         usersUnavailableRef.current = false;
+=======
+>>>>>>> origin/main
   
         const nextChats: ChatPreview[] =
           users.map((user) => ({
@@ -438,6 +488,7 @@ export default function ChatWorkspace() {
         });
       } catch (error) {
         if (!stopped) {
+<<<<<<< HEAD
           const message =
             error instanceof Error
               ? error.message
@@ -454,6 +505,13 @@ export default function ChatWorkspace() {
               'error'
             );
           }
+=======
+          setUsersError(
+            error instanceof Error
+              ? error.message
+              : 'Nutzer konnten nicht geladen werden.'
+          );
+>>>>>>> origin/main
         }
       } finally {
         requestRunning = false;
@@ -477,7 +535,10 @@ export default function ChatWorkspace() {
   }, [
     getValidAccessToken,
     session?.accessToken,
+<<<<<<< HEAD
     showToast,
+=======
+>>>>>>> origin/main
   ]);
   // =============================================================================
   // EINMALIGE ERFOLGSMELDUNG
@@ -486,6 +547,7 @@ export default function ChatWorkspace() {
   // erneut auslösen kann.
   // =============================================================================
   useEffect(() => {
+<<<<<<< HEAD
     if (!loginSuccessPending) {
       return;
     }
@@ -502,6 +564,21 @@ export default function ChatWorkspace() {
     loginSuccessPending,
     showToast,
   ]);
+=======
+    if (!loginSuccessPending) return;
+
+    setShowLoginNotice(true);
+    consumeLoginSuccess();
+  }, [consumeLoginSuccess, loginSuccessPending]);
+
+  // Sobald der Toast sichtbar ist, wird er nach fünf Sekunden ausgeblendet.
+  useEffect(() => {
+    if (!showLoginNotice) return;
+
+    const timeout = setTimeout(() => setShowLoginNotice(false), 5000);
+    return () => clearTimeout(timeout);
+  }, [showLoginNotice]);
+>>>>>>> origin/main
 
   // Sucht aus der echten Nutzerliste den aktuell ausgewählten Chat.
   const selectedChat = useMemo(
@@ -518,6 +595,7 @@ export default function ChatWorkspace() {
     setShowChatOnCompactScreen(true);
   }
 
+<<<<<<< HEAD
   async function sendMessage() {
     const plaintext = draft.trim();
     const socket = socketRef.current;
@@ -616,6 +694,46 @@ export default function ChatWorkspace() {
     } finally {
       setIsSendingMessage(false);
     }
+=======
+  function sendMessage() {
+    const text = draft.trim();
+    const socket = socketRef.current;
+
+    if (!text || !selectedChatId) {
+      return;
+    }
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      Alert.alert(
+        'Keine Verbindung',
+        'Der Gateway ist momentan nicht verbunden.'
+      );
+
+      return;
+    }
+
+    socket.send(
+      JSON.stringify({
+        targetId: selectedChatId,
+        text,
+      })
+    );
+
+    setMessagesByChat((current) => ({
+      ...current,
+      [selectedChatId]: [
+        ...(current[selectedChatId] ?? []),
+        {
+          id: `${selectedChatId}-${Date.now()}`,
+          mine: true,
+          text,
+          time: 'Jetzt',
+        },
+      ],
+    }));
+
+    setDraft('');
+>>>>>>> origin/main
   }
 
   // Meldet den Nutzer über Gateway und UserService ab.
@@ -627,12 +745,20 @@ export default function ChatWorkspace() {
     try {
       await endSession();
     } catch (error) {
+<<<<<<< HEAD
       showToast(
         'Fehler beim Logout',
         error instanceof Error
           ? error.message
           : 'Die Abmeldung ist fehlgeschlagen.',
         'error'
+=======
+      Alert.alert(
+        'Fehler beim Logout',
+        error instanceof Error
+          ? error.message
+          : 'Die Abmeldung ist fehlgeschlagen.'
+>>>>>>> origin/main
       );
   
       setIsSigningOut(false);
@@ -651,6 +777,7 @@ export default function ChatWorkspace() {
       {/* =====================================================================
           LOGIN-TOAST: Erscheint genau einmal nach erfolgreicher Anmeldung.
           ===================================================================== */}
+<<<<<<< HEAD
       {toast && (
         <View
           pointerEvents="none"
@@ -692,6 +819,16 @@ export default function ChatWorkspace() {
             >
               {toast.message}
             </Text>
+=======
+      {showLoginNotice && (
+        <View pointerEvents="none" style={styles.loginToast}>
+          <View style={styles.loginToastIcon}>
+            <Text style={styles.loginToastIconText}>✓</Text>
+          </View>
+          <View>
+            <Text style={styles.loginToastTitle}>Anmeldung erfolgreich</Text>
+            <Text style={styles.loginToastText}>Willkommen zurück im EVA Chat.</Text>
+>>>>>>> origin/main
           </View>
         </View>
       )}
@@ -875,6 +1012,7 @@ export default function ChatWorkspace() {
                 />
                 <Pressable
                   accessibilityLabel="Nachricht senden"
+<<<<<<< HEAD
                   disabled={
                     !draft.trim() ||
                     !e2eeIdentity ||
@@ -883,6 +1021,10 @@ export default function ChatWorkspace() {
                   onPress={() =>
                     void sendMessage()
                   }
+=======
+                  disabled={!draft.trim()}
+                  onPress={sendMessage}
+>>>>>>> origin/main
                   style={({ pressed }) => [
                     styles.sendButton,
                     !draft.trim() && styles.sendButtonDisabled,
@@ -893,11 +1035,15 @@ export default function ChatWorkspace() {
                 </Pressable>
               </View>
               <Text style={styles.composerHint}>
+<<<<<<< HEAD
               {e2eeError
                 ? `E2EE-Fehler: ${e2eeError}`
                 : e2eeIdentity
                   ? 'Nachrichten werden vor dem Senden lokal verschlüsselt.'
                   : 'E2EE-Schlüssel wird vorbereitet …'}
+=======
+                Nachrichten werden über den Gateway gesendet.
+>>>>>>> origin/main
               </Text>
             </View>
           </View>
@@ -967,6 +1113,7 @@ const styles = StyleSheet.create({
     color: '#86efac',
     fontSize: 11,
   },
+<<<<<<< HEAD
   
   toastContent: {
     flex: 1,
@@ -988,6 +1135,8 @@ const styles = StyleSheet.create({
   errorToastText: {
     color: '#fca5a5',
   },
+=======
+>>>>>>> origin/main
 
   // --- Gemeinsamer Rahmen für Sidebar und Gespräch ---
   appShell: {

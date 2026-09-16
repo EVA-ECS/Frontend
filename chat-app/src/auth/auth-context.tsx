@@ -335,4 +335,8 @@ export function useAuth() {
   }
 
   return context;
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> origin/main

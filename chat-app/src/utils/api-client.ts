@@ -18,6 +18,7 @@ export type AuthSession = {
     displayName: string;
     isOnline: boolean;
   };
+<<<<<<< HEAD
 
   export type PublicKeyResponse = {
     userId: string;
@@ -25,6 +26,8 @@ export type AuthSession = {
     publicKey: string;
     updatedAt: string;
   };  
+=======
+>>>>>>> origin/main
   
   type ApiErrorBody = {
     code?: string;
@@ -164,6 +167,7 @@ export type AuthSession = {
         },
       }
     );
+<<<<<<< HEAD
   }
 
   export function publishOwnPublicKey(
@@ -200,4 +204,6 @@ export type AuthSession = {
         },
       }
     );
+=======
+>>>>>>> origin/main
   }
