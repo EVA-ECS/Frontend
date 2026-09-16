@@ -18,6 +18,16 @@ export type AuthSession = {
     displayName: string;
     isOnline: boolean;
   };
+<<<<<<< HEAD
+
+  export type PublicKeyResponse = {
+    userId: string;
+    keyId: string;
+    publicKey: string;
+    updatedAt: string;
+  };  
+=======
+>>>>>>> origin/main
   
   type ApiErrorBody = {
     code?: string;
@@ -157,4 +167,43 @@ export type AuthSession = {
         },
       }
     );
+<<<<<<< HEAD
+  }
+
+  export function publishOwnPublicKey(
+    accessToken: string,
+    publicKey: string
+  ): Promise<PublicKeyResponse> {
+    return request<PublicKeyResponse>(
+      '/api/users/me/public-key',
+      {
+        method: 'PUT',
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`,
+          'Content-Type':
+            'application/json',
+        },
+        body: JSON.stringify({
+          publicKey,
+        }),
+      }
+    );
+  }
+  
+  export function getUserPublicKey(
+    accessToken: string,
+    userId: string
+  ): Promise<PublicKeyResponse> {
+    return request<PublicKeyResponse>(
+      `/api/users/${encodeURIComponent(userId)}/public-key`,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`,
+        },
+      }
+    );
+=======
+>>>>>>> origin/main
   }
