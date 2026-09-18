@@ -55,4 +55,4 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
-chat-app/package-lock.json
+# Keep chat-app/package-lock.json tracked for reproducible npm ci builds.

@@ -1,6 +1,7 @@
 import {
     getUserPublicKey,
     publishOwnPublicKey,
+    ApiError,
     type PublicKeyResponse,
   } from '../utils/api-client';
   
@@ -342,6 +343,16 @@ import {
     ): Promise<LocalE2eeIdentity> {
     let identity =
       await readIdentity(userId);
+    let directoryKey: PublicKeyResponse | null = null;
+    try {
+      directoryKey = await getUserPublicKey(accessToken, userId);
+      await validateDirectoryKey(directoryKey, userId);
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 404)) throw error;
+    }
+    if (directoryKey && (!identity || directoryKey.keyId !== identity.keyId)) {
+      throw new Error('Der Schlüssel dieses Kontos gehört zu einem anderen Browser. Bitte den ursprünglichen Browser verwenden; es wurde kein Schlüssel ersetzt.');
+    }
   
     if (identity) {
       validatePrivateKey(
@@ -365,7 +376,7 @@ import {
       await saveIdentity(identity);
     }
   
-    const published =
+    const published = directoryKey ??
       await publishOwnPublicKey(
         accessToken,
         identity.publicKey
@@ -573,31 +584,26 @@ import {
     const payload =
       parsed as EncryptedPayloadV1;
   
-    if (
-      payload.recipientId !==
-        identity.userId ||
-      payload.recipientKeyId !==
-        identity.keyId
-    ) {
+    const isSender = payload.senderId === identity.userId;
+    const ownKeyId = isSender ? payload.senderKeyId : payload.recipientKeyId;
+    if ((!isSender && payload.recipientId !== identity.userId) || ownKeyId !== identity.keyId) {
       throw new Error(
         'Diese Nachricht ist nicht für den lokalen Schlüssel bestimmt.'
       );
     }
   
-    const senderKey =
-      await getUserPublicKey(
-        accessToken,
-        payload.senderId
-      );
+    const peerId = isSender ? payload.recipientId : payload.senderId;
+    const peerKeyId = isSender ? payload.recipientKeyId : payload.senderKeyId;
+    const senderKey = await getDecryptionKey(accessToken, peerId, peerKeyId);
   
     await validateDirectoryKey(
       senderKey,
-      payload.senderId
+      peerId
     );
   
     if (
       senderKey.keyId !==
-        payload.senderKeyId
+        peerKeyId
     ) {
       throw new Error(
         'Der Absenderschlüssel stimmt nicht mit der Nachricht überein.'
@@ -650,4 +656,20 @@ import {
         'Die Nachricht wurde verändert oder mit einem anderen Schlüssel verschlüsselt.'
       );
     }
+  }
+
+  // A history page usually contains many messages with the same public key.
+  // Cache only validated public keys, never plaintext or private keys.
+  const decryptionKeys = new Map<string, PublicKeyResponse>();
+  async function getDecryptionKey(accessToken: string, userId: string, keyId: string) {
+    const cacheId = `${userId}:${keyId}`;
+    const cached = decryptionKeys.get(cacheId);
+    if (cached) return cached;
+    const key = await getUserPublicKey(accessToken, userId);
+    await validateDirectoryKey(key, userId);
+    if (key.keyId === keyId) {
+      if (decryptionKeys.size >= 100) decryptionKeys.clear();
+      decryptionKeys.set(cacheId, key);
+    }
+    return key;
   }
