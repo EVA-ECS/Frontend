@@ -30,6 +30,23 @@ export type AuthSession = {
     code?: string;
     message?: string;
   };
+
+  export type ChatEvent = {
+    messageId: string;
+    senderId: string;
+    targetId: string;
+    ciphertext: string;
+    timestamp: string;
+  };
+  export type HistoryPage = { messages: ChatEvent[]; nextCursor: string | null };
+
+  export function getChatHistory(accessToken: string, otherUserId: string, before?: string): Promise<HistoryPage> {
+    const query = new URLSearchParams({ limit: '50' });
+    if (before) query.set('before', before);
+    return request<HistoryPage>(`/api/chat/history/${encodeURIComponent(otherUserId)}?${query}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  }
   
   export class ApiError extends Error {
     constructor(

@@ -51,6 +51,7 @@ export function AuthProvider({
   const [isLoading, setIsLoading] = useState(true);
   const [loginSuccessPending, setLoginSuccessPending] =
     useState(false);
+  const sessionExpiresAt = session?.expiresAt;
 
   const sessionRef = useRef<AuthSession | null>(null);
   const refreshPromiseRef =
@@ -199,7 +200,7 @@ export function AuthProvider({
   ]);
 
   useEffect(() => {
-    if (!session) {
+    if (!sessionExpiresAt) {
       return;
     }
 
@@ -236,7 +237,7 @@ export function AuthProvider({
     );
 
     return () => clearInterval(interval);
-  }, [session?.expiresAt, refreshCurrentSession]);
+  }, [sessionExpiresAt, refreshCurrentSession]);
 
   useEffect(() => {
     const subscription =
