@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { decryptMessageForCurrentUser, encryptMessageForUser, ensureE2eeIdentity, type LocalE2eeIdentity } from '../e2ee/e2ee';
 import { GATEWAY_WS_URL, getChatHistory, type ChatEvent } from '../utils/api-client';
 import { isChatEvent, mergeMessages, messageTime, validateParticipants, type ChatMessage } from './messages';
@@ -7,7 +7,7 @@ type Notice = (title: string, message: string, kind?: 'success' | 'error') => vo
 type HistoryState = { loading: boolean; error: string | null; nextCursor?: string | null };
 
 export function usePrivateChat(userId: string | undefined, selectedChatId: string | null,
-  getToken: () => Promise<string | null>, notify: Notice) {
+  getToken: () => Promise<string | null>, notify: Notice, visibleChatId: string | null = selectedChatId) {
   const [messagesByChat, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [history, setHistory] = useState<Record<string, HistoryState>>({});
   const [identity, setIdentity] = useState<LocalE2eeIdentity | null>(null);
@@ -18,6 +18,22 @@ export function usePrivateChat(userId: string | undefined, selectedChatId: strin
   const socketRef = useRef<WebSocket | null>(null);
   const generation = useRef(0);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const visibleChatIdRef = useRef<string | null>(visibleChatId);
+  const unreadByChat = useMemo(() => Object.fromEntries(
+    Object.entries(messagesByChat).map(([chatId, messages]) =>
+      [chatId, messages.filter(message => !message.mine && message.unread).length])
+  ), [messagesByChat]);
+
+  useEffect(() => {
+    visibleChatIdRef.current = visibleChatId;
+    if (!visibleChatId) return;
+    setMessages(current => {
+      const messages = current[visibleChatId];
+      if (!messages?.some(message => message.unread)) return current;
+      return { ...current, [visibleChatId]: messages.map(message =>
+        message.unread ? { ...message, unread: false } : message) };
+    });
+  }, [visibleChatId]);
 
   const insert = useCallback((chatId: string, messages: ChatMessage[]) => {
     setMessages(current => ({ ...current, [chatId]: mergeMessages(current[chatId] ?? [], messages) }));
@@ -29,7 +45,7 @@ export function usePrivateChat(userId: string | undefined, selectedChatId: strin
     try { text = await decryptMessageForCurrentUser(key, event.ciphertext, token); }
     catch { text = 'Nachricht nicht lesbar: Schlüssel fehlt oder Inhalt wurde verändert.'; }
     return { id: event.messageId, mine: event.senderId === key.userId, text,
-      ciphertext: event.ciphertext, timestamp: event.timestamp, time: messageTime(event.timestamp), status: 'stored' };
+      ciphertext: event.ciphertext, timestamp: event.timestamp, time: messageTime(event.timestamp), status: 'stored', unread: false };
   }, []);
 
   useEffect(() => {
@@ -59,7 +75,10 @@ export function usePrivateChat(userId: string | undefined, selectedChatId: strin
         const token = await getToken();
         if (!token || stopped) return;
         const message = await decode(value, activeIdentity, token);
-        if (!stopped) insert(value.senderId === userId ? value.targetId : value.senderId, [message]);
+        if (!stopped) {
+          const chatId = message.mine ? value.targetId : value.senderId;
+          insert(chatId, [{ ...message, unread: !message.mine && visibleChatIdRef.current !== chatId }]);
+        }
         return;
       }
       const reply = value as { status?: string; requestId?: string; messageId?: string; timestamp?: string; message?: string };
@@ -207,5 +226,5 @@ export function usePrivateChat(userId: string | undefined, selectedChatId: strin
     } finally { setSending(false); }
   }, [identity, e2eeError, connectionError, getToken, notify, insert]);
 
-  return { messagesByChat, history, loadHistory, sendMessage, isSendingMessage, e2eeError, connectionError, e2eeReady: !!identity };
+  return { messagesByChat, unreadByChat, history, loadHistory, sendMessage, isSendingMessage, e2eeError, connectionError, e2eeReady: !!identity };
 }

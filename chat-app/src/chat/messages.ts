@@ -8,6 +8,7 @@ export type ChatMessage = {
   timestamp: string;
   ciphertext: string;
   requestId?: string;
+  unread?: boolean;
   status: 'sending' | 'published' | 'stored' | 'unconfirmed';
 };
 
@@ -37,7 +38,9 @@ export function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): 
           existing.ciphertext === message.ciphertext) messages.delete(id);
     }
     const existing = messages.get(message.id);
-    messages.set(message.id, existing?.status === 'stored' && message.status !== 'stored' ? existing : message);
+    const merged = existing?.status === 'stored' && message.status !== 'stored' ? existing : message;
+    // History refreshes and duplicate deliveries must preserve the local read state.
+    messages.set(message.id, existing?.unread !== undefined ? { ...merged, unread: existing.unread } : merged);
   }
   return [...messages.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id));
 }

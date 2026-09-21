@@ -23,6 +23,7 @@ import {
 } from '../utils/api-client';
 
 import { usePrivateChat } from '../chat/use-private-chat';
+import { useAppActive } from '../chat/use-app-active';
 
 // =============================================================================
 // DATENTYPEN
@@ -103,9 +104,11 @@ export default function ChatWorkspace() {
       };
     }, []);
 
-  const { messagesByChat, history, loadHistory, sendMessage: sendEncryptedMessage,
+  const isAppActive = useAppActive();
+  const visibleChatId = isAppActive && (!isCompact || showChatOnCompactScreen) ? selectedChatId : null;
+  const { messagesByChat, unreadByChat, history, loadHistory, sendMessage: sendEncryptedMessage,
     isSendingMessage, e2eeError, connectionError, e2eeReady } = usePrivateChat(
-      session?.user.userId, selectedChatId, getValidAccessToken, showToast);
+      session?.user.userId, selectedChatId, getValidAccessToken, showToast, visibleChatId);
 
   // Lädt die Nutzer über Gateway und UserService.
   // Der UserService ergänzt den Online-Status aus Redis.
@@ -359,10 +362,13 @@ export default function ChatWorkspace() {
               {chats.map((chat) => {
                 // Markiert den aktuell ausgewählten Eintrag farblich.
                 const isActive = chat.id === selectedChatId;
+                const unreadCount = unreadByChat[chat.id] ?? 0;
 
                 return (
                   <Pressable
+                    accessibilityRole="button"
                     accessibilityLabel={`Chat mit ${chat.name}`}
+                    accessibilityHint={unreadCount > 0 ? `${unreadCount} ungelesene Nachrichten` : undefined}
                     key={chat.id}
                     onPress={() => selectChat(chat.id)}
                     style={({ pressed }) => [
@@ -377,12 +383,22 @@ export default function ChatWorkspace() {
                     </View>
                     <View style={styles.chatRowText}>
                       <View style={styles.chatRowTitleLine}>
-                        <Text style={styles.chatName}>{chat.name}</Text>
+                        <Text numberOfLines={1} style={styles.chatName}>{chat.name}</Text>
                       </View>
                       <Text numberOfLines={1} style={styles.chatPreview}>
                         {chat.isOnline ? 'Online' : 'Offline'}
                       </Text>
                     </View>
+                    {unreadCount > 0 && (
+                      <View style={styles.unreadBadge}>
+                        <Text
+                          accessibilityLabel={`${unreadCount} ungelesene ${unreadCount === 1 ? 'Nachricht' : 'Nachrichten'}`}
+                          style={styles.unreadBadgeText}
+                        >
+                          {unreadCount > 99 ? '99+' : unreadCount}
+                        </Text>
+                      </View>
+                    )}
                   </Pressable>
                 );
               })}
@@ -797,6 +813,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   // --- Angemeldetes Konto und Logout unten links ---
+  unreadBadge: {
+    minWidth: 24,
+    height: 24,
+    paddingHorizontal: 7,
+    flexShrink: 0,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#7c3aed',
+  },
+  unreadBadgeText: {
+    color: '#f5f3ff',
+    fontSize: 12,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
   accountCard: {
     minHeight: 86,
     paddingHorizontal: 20,

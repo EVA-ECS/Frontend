@@ -62,6 +62,15 @@ test('a late published acknowledgement cannot downgrade a stored message', () =>
   const stored = { ...sent, id: 'server-id', status: 'stored' as const };
   assert.deepEqual(mergeMessages([stored], [{ ...stored, status: 'published' }]), [stored]);
 });
+
+test('history and duplicate delivery preserve unread counts and already-read messages', () => {
+  const received = { ...sent, id: 'received-id', mine: false, status: 'stored' as const, unread: true };
+  const history = { ...received, unread: false };
+  const merged = mergeMessages([received], [received, history]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].unread, true);
+  assert.equal(mergeMessages([history], [received])[0].unread, false);
+});
 test('message order is stable for identical timestamps', () => {
   const a = { ...sent, id: 'a', ciphertext: 'a', status: 'stored' as const };
   const b = { ...sent, id: 'b', ciphertext: 'b', status: 'stored' as const };
