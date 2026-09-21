@@ -19,15 +19,11 @@ import {
 
 import { useAuth } from '../auth/auth-context';
 import {
-  GATEWAY_WS_URL,
   getUsers,
 } from '../utils/api-client';
 
-import {
-  encryptMessageForUser,
-  ensureE2eeIdentity,
-  type LocalE2eeIdentity,
-} from '../e2ee/e2ee';
+import { usePrivateChat } from '../chat/use-private-chat';
+import { useAppActive } from '../chat/use-app-active';
 
 // =============================================================================
 // DATENTYPEN
@@ -39,14 +35,6 @@ type ChatPreview = {
   id: string;
   name: string;
   isOnline: boolean;
-};
-
-// Aufbau einer einzelnen Nachricht im rechten Gesprächsbereich.
-type ChatMessage = {
-  id: string;
-  mine: boolean;
-  text: string;
-  time: string;
 };
 
 type ToastNotice = {
@@ -68,11 +56,10 @@ export default function ChatWorkspace() {
     signOut: endSession,
   } = useAuth();
   const isCompact = width < 760;
+  const userId = session?.user.userId;
 
   const [chats, setChats] = useState<ChatPreview[]>([]);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
-  const [messagesByChat, setMessagesByChat] =
-    useState<Record<string, ChatMessage[]>>({});
   const [draft, setDraft] = useState('');
   const [isLoadingUsers, setIsLoadingUsers] = useState(true);
   const [usersError, setUsersError] = useState<string | null>(null);
@@ -83,30 +70,7 @@ export default function ChatWorkspace() {
 
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const socketUnavailableRef = useRef(false);
   const usersUnavailableRef = useRef(false);
-
-  const socketRef = useRef<WebSocket | null>(null);
-
-  const [
-    e2eeIdentity,
-    setE2eeIdentity,
-  ] =
-    useState<
-      LocalE2eeIdentity | null
-    >(null);
-  
-  const [
-    e2eeError,
-    setE2eeError,
-  ] =
-    useState<string | null>(null);
-  
-  const [
-    isSendingMessage,
-    setIsSendingMessage,
-  ] =
-    useState(false);
 
     const showToast = useCallback(
       (
@@ -140,250 +104,19 @@ export default function ChatWorkspace() {
       };
     }, []);
 
-  useEffect(() => {
-    if (!session) {
-      return;
-    }
-  
-    // Traefik nimmt die Verbindung auf Port 80 an und leitet
-    // den Pfad /ws an das Gateway weiter.
-    const gatewayUrl = `${GATEWAY_WS_URL}/ws`;
-  
-    let socket: WebSocket | null = null;
-    let retryTimer:
-      | ReturnType<typeof setTimeout>
-      | undefined;
-    let heartbeatTimer:
-      | ReturnType<typeof setInterval>
-      | undefined;
-    let stopped = false;
-  
-    function stopHeartbeat() {
-      if (heartbeatTimer) {
-        clearInterval(heartbeatTimer);
-        heartbeatTimer = undefined;
-      }
-    }
-  
-    function sendHeartbeat() {
-      if (socket?.readyState === WebSocket.OPEN) {
-        socket.send(
-          JSON.stringify({
-            type: 'presence.heartbeat',
-          })
-        );
-      }
-    }
-  
-    function scheduleReconnect() {
-      if (stopped || retryTimer) {
-        return;
-      }
-  
-      retryTimer = setTimeout(() => {
-        retryTimer = undefined;
-        void connect();
-      }, 2000);
-    }
-
-    function reportSocketUnavailable() {
-      if (socketUnavailableRef.current) {
-        return;
-      }
-    
-      socketUnavailableRef.current = true;
-    
-      showToast(
-        'Chatserver nicht erreichbar',
-        'Die Verbindung wird automatisch erneut versucht.',
-        'error'
-      );
-    }
-  
-    async function connect() {
-      try {
-        const accessToken =
-          await getValidAccessToken();
-  
-        if (stopped || !accessToken) {
-          return;
-        }
-  
-        socket = new WebSocket(
-          `${gatewayUrl}?access_token=${encodeURIComponent(
-            accessToken
-          )}`
-        );
-  
-        socketRef.current = socket;
-  
-        socket.onopen = () => {
-          const wasUnavailable = socketUnavailableRef.current;
-      
-          socketUnavailableRef.current = false;
-      
-          if (wasUnavailable) {
-            showToast(
-              'Verbindung wiederhergestellt',
-              'Der Chatserver ist wieder erreichbar.',
-              'success'
-            );
-          }
-
-          console.log(
-            'WebSocket mit Gateway verbunden'
-          );
-  
-          stopHeartbeat();
-          sendHeartbeat();
-  
-          heartbeatTimer = setInterval(
-            sendHeartbeat,
-            30000
-          );
-        };
-  
-        socket.onmessage = (event) => {
-          try {
-            const response = JSON.parse(event.data);
-  
-            console.log(
-              'Antwort vom Gateway:',
-              response
-            );
-          } catch {
-            console.warn(
-              'Ungültige WebSocket-Nachricht empfangen'
-            );
-          }
-        };
-  
-        socket.onerror = () => {
-          console.warn(
-            'WebSocket-Verbindung fehlgeschlagen'
-          );
-
-          reportSocketUnavailable();
-        };
-  
-        socket.onclose = () => { 
-          stopHeartbeat();
-        
-          if (socketRef.current === socket) {
-            socketRef.current = null;
-          }
-        
-          console.log('WebSocket geschlossen');
-        
-          if (!stopped) {
-            reportSocketUnavailable();
-            scheduleReconnect();
-          }
-        };
-      } catch (error) {
-        console.warn(
-          'WebSocket konnte nicht aufgebaut werden.',
-          error
-        );
-        reportSocketUnavailable();
-        scheduleReconnect();
-      }
-    }
-  
-    void connect();
-  
-    return () => {
-      stopped = true;
-  
-      if (retryTimer) {
-        clearTimeout(retryTimer);
-        retryTimer = undefined;
-      }
-  
-      stopHeartbeat();
-      socket?.close();
-  
-      if (socketRef.current === socket) {
-        socketRef.current = null;
-      }
-    };
-  }, [
-    getValidAccessToken,
-    session?.accessToken,
-    showToast,
-  ]);
-
-  useEffect(() => {
-    const userId =
-      session?.user.userId;
-  
-    if (!userId) {
-      setE2eeIdentity(null);
-      setE2eeError(null);
-      return;
-    }
-  
-    let cancelled = false;
-  
-    async function initializeE2ee() {
-      try {
-        const accessToken =
-          await getValidAccessToken();
-  
-        if (!accessToken) {
-          throw new Error(
-            'Die Sitzung ist abgelaufen.'
-          );
-        }
-  
-        const identity =
-          await ensureE2eeIdentity(
-            userId!,
-            accessToken
-          );
-  
-        if (!cancelled) {
-          setE2eeIdentity(identity);
-          setE2eeError(null);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setE2eeIdentity(null);
-  
-          setE2eeError(
-            error instanceof Error
-              ? error.message
-              : 'E2EE konnte nicht initialisiert werden.'
-          );
-        }
-      }
-    }
-  
-    void initializeE2ee();
-  
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    getValidAccessToken,
-    session?.user.userId,
-  ]);
+  const isAppActive = useAppActive();
+  const visibleChatId = isAppActive && (!isCompact || showChatOnCompactScreen) ? selectedChatId : null;
+  const { messagesByChat, unreadByChat, history, loadHistory, sendMessage: sendEncryptedMessage,
+    isSendingMessage, e2eeError, connectionError, e2eeReady } = usePrivateChat(
+      session?.user.userId, selectedChatId, getValidAccessToken, showToast, visibleChatId);
 
   // Lädt die Nutzer über Gateway und UserService.
   // Der UserService ergänzt den Online-Status aus Redis.
   useEffect(() => {
-    if (!session) {
-      setChats([]);
-      setSelectedChatId(null);
-      setUsersError(null);
-      setIsLoadingUsers(false);
-      return;
-    }
+    if (!userId) return;
   
     let stopped = false;
     let requestRunning = false;
-  
-    setIsLoadingUsers(true);
   
     async function loadUsers() {
       if (requestRunning) {
@@ -427,15 +160,6 @@ export default function ChatWorkspace() {
             : nextChats[0]?.id ?? null
         );
   
-        setMessagesByChat((current) => {
-          const next = { ...current };
-  
-          for (const chat of nextChats) {
-            next[chat.id] ??= [];
-          }
-  
-          return next;
-        });
       } catch (error) {
         if (!stopped) {
           const message =
@@ -476,7 +200,7 @@ export default function ChatWorkspace() {
     };
   }, [
     getValidAccessToken,
-    session?.accessToken,
+    userId,
     showToast,
   ]);
   // =============================================================================
@@ -490,13 +214,11 @@ export default function ChatWorkspace() {
       return;
     }
   
-    showToast(
-      'Anmeldung erfolgreich',
-      'Willkommen zurück im EVA Chat.',
-      'success'
-    );
-  
-    consumeLoginSuccess();
+    const timer = setTimeout(() => {
+      showToast('Anmeldung erfolgreich', 'Willkommen zurück im EVA Chat.', 'success');
+      consumeLoginSuccess();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [
     consumeLoginSuccess,
     loginSuccessPending,
@@ -519,103 +241,7 @@ export default function ChatWorkspace() {
   }
 
   async function sendMessage() {
-    const plaintext = draft.trim();
-    const socket = socketRef.current;
-  
-    if (
-      !plaintext ||
-      !selectedChatId
-    ) {
-      return;
-    }
-  
-    if (!e2eeIdentity) {
-      showToast(
-        'E2EE nicht bereit',
-        e2eeError ??
-          'Der lokale Schlüssel wird noch vorbereitet.',
-        'error'
-      );
-  
-      return;
-    }
-  
-    if (
-      !socket ||
-      socket.readyState !==
-        WebSocket.OPEN
-    ) {
-      showToast(
-        'Keine Verbindung',
-        'Der Chatserver ist momentan nicht verbunden.',
-        'error'
-      );
-  
-      return;
-    }
-  
-    setIsSendingMessage(true);
-  
-    try {
-      const accessToken =
-        await getValidAccessToken();
-  
-      if (!accessToken) {
-        throw new Error(
-          'Die Sitzung ist abgelaufen.'
-        );
-      }
-  
-      const ciphertext =
-        await encryptMessageForUser(
-          e2eeIdentity,
-          selectedChatId,
-          plaintext,
-          accessToken
-        );
-  
-      socket.send(
-        JSON.stringify({
-          targetId: selectedChatId,
-  
-          // Im Feld text steht nur noch
-          // der verschlüsselte Container.
-          text: ciphertext,
-        })
-      );
-  
-      // Der eigene Klartext wird nur
-      // lokal für die Oberfläche genutzt.
-      setMessagesByChat(
-        (current) => ({
-          ...current,
-          [selectedChatId]: [
-            ...(current[
-              selectedChatId
-            ] ?? []),
-            {
-              id:
-                `${selectedChatId}-${Date.now()}`,
-              mine: true,
-              text: plaintext,
-              time: 'Jetzt',
-            },
-          ],
-        })
-      );
-  
-      setDraft('');
-    } catch (error) {
-      showToast(
-        'Nachricht nicht gesendet',
-        error instanceof Error
-          ? error.message
-          : 'Die Verschlüsselung ist fehlgeschlagen.',
-        'error'
-      );
-    } finally {
-      setIsSendingMessage(false);
-    }
+    if (selectedChatId && await sendEncryptedMessage(selectedChatId, draft.trim())) setDraft('');
   }
 
   // Meldet den Nutzer über Gateway und UserService ab.
@@ -736,10 +362,13 @@ export default function ChatWorkspace() {
               {chats.map((chat) => {
                 // Markiert den aktuell ausgewählten Eintrag farblich.
                 const isActive = chat.id === selectedChatId;
+                const unreadCount = unreadByChat[chat.id] ?? 0;
 
                 return (
                   <Pressable
+                    accessibilityRole="button"
                     accessibilityLabel={`Chat mit ${chat.name}`}
+                    accessibilityHint={unreadCount > 0 ? `${unreadCount} ungelesene Nachrichten` : undefined}
                     key={chat.id}
                     onPress={() => selectChat(chat.id)}
                     style={({ pressed }) => [
@@ -754,12 +383,22 @@ export default function ChatWorkspace() {
                     </View>
                     <View style={styles.chatRowText}>
                       <View style={styles.chatRowTitleLine}>
-                        <Text style={styles.chatName}>{chat.name}</Text>
+                        <Text numberOfLines={1} style={styles.chatName}>{chat.name}</Text>
                       </View>
                       <Text numberOfLines={1} style={styles.chatPreview}>
                         {chat.isOnline ? 'Online' : 'Offline'}
                       </Text>
                     </View>
+                    {unreadCount > 0 && (
+                      <View style={styles.unreadBadge}>
+                        <Text
+                          accessibilityLabel={`${unreadCount} ungelesene ${unreadCount === 1 ? 'Nachricht' : 'Nachrichten'}`}
+                          style={styles.unreadBadgeText}
+                        >
+                          {unreadCount > 99 ? '99+' : unreadCount}
+                        </Text>
+                      </View>
+                    )}
                   </Pressable>
                 );
               })}
@@ -838,8 +477,21 @@ export default function ChatWorkspace() {
               showsVerticalScrollIndicator={false}
             >
               <View style={styles.datePill}>
-                <Text style={styles.datePillText}>HEUTE</Text>
+                <Text style={styles.datePillText}>VERLAUF</Text>
               </View>
+              {history[selectedChat.id]?.error && (
+                <Pressable onPress={() => void loadHistory(selectedChat.id)} accessibilityLabel="Verlauf erneut laden">
+                  <Text style={styles.userListNotice}>{history[selectedChat.id].error} Erneut versuchen</Text>
+                </Pressable>
+              )}
+              {history[selectedChat.id]?.loading && <ActivityIndicator color="#8b5cf6" />}
+              {history[selectedChat.id]?.nextCursor && (
+                <Pressable disabled={history[selectedChat.id]?.loading}
+                  accessibilityLabel="Ältere Nachrichten laden"
+                  onPress={() => void loadHistory(selectedChat.id, history[selectedChat.id].nextCursor!)}>
+                  <Text style={styles.userListNotice}>Ältere Nachrichten laden</Text>
+                </Pressable>
+              )}
               {(messagesByChat[selectedChat.id] ?? []).map((message) => (
                 <View
                   key={message.id}
@@ -856,6 +508,11 @@ export default function ChatWorkspace() {
                   >
                     <Text style={styles.messageText}>{message.text}</Text>
                     <Text style={styles.messageTime}>{message.time}</Text>
+                    {message.mine && <Text style={styles.messageTime}>{
+                      message.status === 'stored' ? 'Gespeichert' :
+                      message.status === 'published' ? 'An Warteschlange übergeben' :
+                      message.status === 'sending' ? 'Wird gesendet …' : 'Versand nicht bestätigt'
+                    }</Text>}
                   </View>
                 </View>
               ))}
@@ -863,9 +520,11 @@ export default function ChatWorkspace() {
 
             {/* NACHRICHTEN-EINGABE: Lokale Texteingabe und Senden-Button. */}
             <View style={styles.composerArea}>
+              {(e2eeError || connectionError) && <Text style={styles.userListNotice}>{e2eeError ?? connectionError}</Text>}
               <View style={styles.composer}>
                 <TextInput
                   accessibilityLabel="Nachricht"
+                  maxLength={4000}
                   multiline
                   onChangeText={setDraft}
                   placeholder="Nachricht schreiben …"
@@ -877,7 +536,7 @@ export default function ChatWorkspace() {
                   accessibilityLabel="Nachricht senden"
                   disabled={
                     !draft.trim() ||
-                    !e2eeIdentity ||
+                    !e2eeReady ||
                     isSendingMessage
                   }
                   onPress={() =>
@@ -895,7 +554,7 @@ export default function ChatWorkspace() {
               <Text style={styles.composerHint}>
               {e2eeError
                 ? `E2EE-Fehler: ${e2eeError}`
-                : e2eeIdentity
+                : e2eeReady
                   ? 'Nachrichten werden vor dem Senden lokal verschlüsselt.'
                   : 'E2EE-Schlüssel wird vorbereitet …'}
               </Text>
@@ -1154,6 +813,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   // --- Angemeldetes Konto und Logout unten links ---
+  unreadBadge: {
+    minWidth: 24,
+    height: 24,
+    paddingHorizontal: 7,
+    flexShrink: 0,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#7c3aed',
+  },
+  unreadBadgeText: {
+    color: '#f5f3ff',
+    fontSize: 12,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
   accountCard: {
     minHeight: 86,
     paddingHorizontal: 20,
