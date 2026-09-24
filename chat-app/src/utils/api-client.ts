@@ -62,6 +62,8 @@ export type AuthSession = {
   export const GATEWAY_HTTP_URL =
     process.env.EXPO_PUBLIC_GATEWAY_URL?.replace(/\/$/, '') ??
     'http://localhost';
+
+  console.log("🛠️ EINGEBACKENE GATEWAY-URL:", GATEWAY_HTTP_URL);
   
   export const GATEWAY_WS_URL =
     GATEWAY_HTTP_URL.replace(/^http/, 'ws');
