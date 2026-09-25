@@ -15,8 +15,12 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  Platform
 } from 'react-native';
 
+// The auth module is TSX; keep this import usable when the editor checks this
+// file outside the project's JSX-enabled TypeScript configuration.
+// @ts-ignore TS6142: the project build resolves this module with JSX enabled.
 import { useAuth } from '../auth/auth-context';
 import {
   getUsers,
@@ -69,40 +73,50 @@ export default function ChatWorkspace() {
   const [toast, setToast] = useState<ToastNotice | null>(null);
 
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messagesScrollRef = useRef<ScrollView>(null);
+  const followLatestRef = useRef(true);
+  const sendInProgressRef = useRef(false);
+
+  const scrollToLatest = useCallback(() => {
+    requestAnimationFrame(() => {
+      followLatestRef.current = true;
+      messagesScrollRef.current?.scrollToEnd({ animated: false });
+    });
+  }, []);
 
   const usersUnavailableRef = useRef(false);
 
-    const showToast = useCallback(
-      (
-        title: string,
-        message: string,
-        kind: ToastNotice['kind'] = 'error'
-      ) => {
-        if (toastTimeoutRef.current) {
-          clearTimeout(toastTimeoutRef.current);
-        }
-    
-        setToast({
-          title,
-          message,
-          kind,
-        });
-    
-        toastTimeoutRef.current = setTimeout(() => {
-          setToast(null);
-          toastTimeoutRef.current = null;
-        }, 5000);
-      },
-      []
-    );
-    
-    useEffect(() => {
-      return () => {
-        if (toastTimeoutRef.current) {
-          clearTimeout(toastTimeoutRef.current);
-        }
-      };
-    }, []);
+  const showToast = useCallback(
+    (
+      title: string,
+      message: string,
+      kind: ToastNotice['kind'] = 'error'
+    ) => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+
+      setToast({
+        title,
+        message,
+        kind,
+      });
+
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast(null);
+        toastTimeoutRef.current = null;
+      }, 5000);
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const isAppActive = useAppActive();
   const visibleChatId = isAppActive && (!isCompact || showChatOnCompactScreen) ? selectedChatId : null;
@@ -114,64 +128,64 @@ export default function ChatWorkspace() {
   // Der UserService ergänzt den Online-Status aus Redis.
   useEffect(() => {
     if (!userId) return;
-  
+
     let stopped = false;
     let requestRunning = false;
-  
+
     async function loadUsers() {
       if (requestRunning) {
         return;
       }
-  
+
       requestRunning = true;
-  
+
       try {
         const accessToken =
           await getValidAccessToken();
-  
+
         if (stopped || !accessToken) {
           return;
         }
-  
+
         const users = await getUsers(accessToken);
-  
+
         if (stopped) {
           return;
         }
 
         usersUnavailableRef.current = false;
-  
+
         const nextChats: ChatPreview[] =
           users.map((user) => ({
             id: user.userId,
             name: user.displayName,
             isOnline: user.isOnline,
           }));
-  
+
         setChats(nextChats);
         setUsersError(null);
-  
+
         setSelectedChatId((current) =>
           current &&
-          nextChats.some(
-            (chat) => chat.id === current
-          )
+            nextChats.some(
+              (chat) => chat.id === current
+            )
             ? current
             : nextChats[0]?.id ?? null
         );
-  
+
       } catch (error) {
         if (!stopped) {
           const message =
             error instanceof Error
               ? error.message
               : 'Nutzer konnten nicht geladen werden.';
-      
+
           setUsersError(message);
-      
+
           if (!usersUnavailableRef.current) {
             usersUnavailableRef.current = true;
-      
+
             showToast(
               'Serverfehler',
               'Die Nutzerliste konnte nicht geladen werden.',
@@ -181,19 +195,19 @@ export default function ChatWorkspace() {
         }
       } finally {
         requestRunning = false;
-  
+
         if (!stopped) {
           setIsLoadingUsers(false);
         }
       }
     }
-  
+
     void loadUsers();
-  
+
     const refreshTimer = setInterval(() => {
       void loadUsers();
     }, 30000);
-  
+
     return () => {
       stopped = true;
       clearInterval(refreshTimer);
@@ -213,7 +227,7 @@ export default function ChatWorkspace() {
     if (!loginSuccessPending) {
       return;
     }
-  
+
     const timer = setTimeout(() => {
       showToast('Anmeldung erfolgreich', 'Willkommen zurück im EVA Chat.', 'success');
       consumeLoginSuccess();
@@ -236,12 +250,39 @@ export default function ChatWorkspace() {
   // =============================================================================
 
   function selectChat(chatId: string) {
+    followLatestRef.current = true;
     setSelectedChatId(chatId);
     setShowChatOnCompactScreen(true);
+    scrollToLatest();
   }
 
   async function sendMessage() {
-    if (selectedChatId && await sendEncryptedMessage(selectedChatId, draft.trim())) setDraft('');
+    const currentDraft = draft;
+    const text = currentDraft.trim();
+
+    if (
+      !selectedChatId ||
+      !text ||
+      !e2eeReady ||
+      isSendingMessage ||
+      sendInProgressRef.current
+    ) {
+      return;
+    }
+
+    sendInProgressRef.current = true;
+    followLatestRef.current = true;
+
+    try {
+      const sent = await sendEncryptedMessage(selectedChatId, text);
+
+      if (sent) {
+        setDraft(current => current === currentDraft ? '' : current);
+        scrollToLatest();
+      }
+    } finally {
+      sendInProgressRef.current = false;
+    }
   }
 
   // Meldet den Nutzer über Gateway und UserService ab.
@@ -249,7 +290,7 @@ export default function ChatWorkspace() {
   // Das Root-Layout leitet danach automatisch zur Loginseite.
   async function signOut() {
     setIsSigningOut(true);
-  
+
     try {
       await endSession();
     } catch (error) {
@@ -260,7 +301,7 @@ export default function ChatWorkspace() {
           : 'Die Abmeldung ist fehlgeschlagen.',
         'error'
       );
-  
+
       setIsSigningOut(false);
     }
   }
@@ -271,6 +312,23 @@ export default function ChatWorkspace() {
   // =============================================================================
   const showSidebar = !isCompact || !showChatOnCompactScreen;
   const showConversation = !isCompact || showChatOnCompactScreen;
+  const currentMessages = selectedChatId
+    ? messagesByChat[selectedChatId] ?? []
+    : [];
+
+  const newestMessage = currentMessages[currentMessages.length - 1];
+  const newestMessageKey = newestMessage?.requestId ?? newestMessage?.id;
+
+  useEffect(() => {
+    if (!selectedChatId || !showConversation) return;
+
+    scrollToLatest();
+  }, [
+    selectedChatId,
+    showConversation,
+    newestMessageKey,
+    scrollToLatest,
+  ]);
 
   return (
     <View style={[styles.page, isCompact && styles.pageCompact]}>
@@ -283,14 +341,14 @@ export default function ChatWorkspace() {
           style={[
             styles.loginToast,
             toast.kind === 'error' &&
-              styles.errorToast,
+            styles.errorToast,
           ]}
         >
           <View
             style={[
               styles.loginToastIcon,
               toast.kind === 'error' &&
-                styles.errorToastIcon,
+              styles.errorToastIcon,
             ]}
           >
             <Text style={styles.loginToastIconText}>
@@ -303,7 +361,7 @@ export default function ChatWorkspace() {
               style={[
                 styles.loginToastTitle,
                 toast.kind === 'error' &&
-                  styles.errorToastTitle,
+                styles.errorToastTitle,
               ]}
             >
               {toast.title}
@@ -313,7 +371,7 @@ export default function ChatWorkspace() {
               style={[
                 styles.loginToastText,
                 toast.kind === 'error' &&
-                  styles.errorToastText,
+                styles.errorToastText,
               ]}
             >
               {toast.message}
@@ -449,7 +507,6 @@ export default function ChatWorkspace() {
               )}
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{selectedChat.name.slice(0, 1)}</Text>
-                {selectedChat.isOnline && <View style={styles.onlineDotSmall} />}
               </View>
               <View style={styles.conversationTitleBlock}>
                 <Text style={styles.conversationTitle}>{selectedChat.name}</Text>
@@ -472,9 +529,26 @@ export default function ChatWorkspace() {
 
             {/* NACHRICHTENVERLAUF: Alle Nachrichten des ausgewählten Chats. */}
             <ScrollView
+              key={selectedChat.id}
+              ref={messagesScrollRef}
               contentContainerStyle={styles.messages}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
+              onLayout={() => {
+                if (followLatestRef.current) scrollToLatest();
+              }}
+              onContentSizeChange={() => {
+                if (followLatestRef.current) scrollToLatest();
+              }}
+              scrollEventThrottle={16}
+              onScroll={({ nativeEvent }) => {
+                const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
+
+                const distanceFromBottom =
+                  contentSize.height - layoutMeasurement.height - contentOffset.y;
+
+                followLatestRef.current = distanceFromBottom <= 80;
+              }}
             >
               <View style={styles.datePill}>
                 <Text style={styles.datePillText}>VERLAUF</Text>
@@ -486,9 +560,17 @@ export default function ChatWorkspace() {
               )}
               {history[selectedChat.id]?.loading && <ActivityIndicator color="#8b5cf6" />}
               {history[selectedChat.id]?.nextCursor && (
-                <Pressable disabled={history[selectedChat.id]?.loading}
+                <Pressable
+                  disabled={history[selectedChat.id]?.loading}
                   accessibilityLabel="Ältere Nachrichten laden"
-                  onPress={() => void loadHistory(selectedChat.id, history[selectedChat.id].nextCursor!)}>
+                  onPress={() => {
+                    followLatestRef.current = false;
+                    void loadHistory(
+                      selectedChat.id,
+                      history[selectedChat.id].nextCursor!,
+                    );
+                  }}
+                >
                   <Text style={styles.userListNotice}>Ältere Nachrichten laden</Text>
                 </Pressable>
               )}
@@ -510,8 +592,8 @@ export default function ChatWorkspace() {
                     <Text style={styles.messageTime}>{message.time}</Text>
                     {message.mine && <Text style={styles.messageTime}>{
                       message.status === 'stored' ? 'Gespeichert' :
-                      message.status === 'published' ? 'An Warteschlange übergeben' :
-                      message.status === 'sending' ? 'Wird gesendet …' : 'Versand nicht bestätigt'
+                        message.status === 'published' ? 'An Warteschlange übergeben' :
+                          message.status === 'sending' ? 'Wird gesendet …' : 'Versand nicht bestätigt'
                     }</Text>}
                   </View>
                 </View>
@@ -527,6 +609,31 @@ export default function ChatWorkspace() {
                   maxLength={4000}
                   multiline
                   onChangeText={setDraft}
+                  onKeyPress={(event) => {
+                    if (Platform.OS !== 'web') return;
+
+                    const key = event.nativeEvent as typeof event.nativeEvent & {
+                      shiftKey?: boolean;
+                      isComposing?: boolean;
+                      repeat?: boolean;
+                      keyCode?: number;
+                    };
+
+                    if (
+                      key.key !== 'Enter' ||
+                      key.shiftKey ||
+                      key.isComposing ||
+                      key.keyCode === 229
+                    ) {
+                      return;
+                    }
+
+                    event.preventDefault();
+
+                    if (!key.repeat) {
+                      void sendMessage();
+                    }
+                  }}
                   placeholder="Nachricht schreiben …"
                   placeholderTextColor="#64748b"
                   style={styles.messageInput}
@@ -552,11 +659,11 @@ export default function ChatWorkspace() {
                 </Pressable>
               </View>
               <Text style={styles.composerHint}>
-              {e2eeError
-                ? `E2EE-Fehler: ${e2eeError}`
-                : e2eeReady
-                  ? 'Nachrichten werden vor dem Senden lokal verschlüsselt.'
-                  : 'E2EE-Schlüssel wird vorbereitet …'}
+                {e2eeError
+                  ? `E2EE-Fehler: ${e2eeError}`
+                  : e2eeReady
+                    ? 'Nachrichten werden vor dem Senden lokal verschlüsselt.'
+                    : 'E2EE-Schlüssel wird vorbereitet …'}
               </Text>
             </View>
           </View>
@@ -626,24 +733,24 @@ const styles = StyleSheet.create({
     color: '#86efac',
     fontSize: 11,
   },
-  
+
   toastContent: {
     flex: 1,
   },
-  
+
   errorToast: {
     borderColor: '#991b1b',
     backgroundColor: '#450a0a',
   },
-  
+
   errorToastIcon: {
     backgroundColor: '#dc2626',
   },
-  
+
   errorToastTitle: {
     color: '#fecaca',
   },
-  
+
   errorToastText: {
     color: '#fca5a5',
   },
