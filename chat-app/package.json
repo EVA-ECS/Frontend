@@ -37,7 +37,13 @@
     "eslint-config-expo": "~57.0.2",
     "fake-indexeddb": "6.2.4",
     "tsx": "4.20.6",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "jest": "29.7.0",
+    "jest-expo": "57.0.4",
+    "@types/jest": "29.5.14",
+    "@react-native/jest-preset": "0.86.2",
+    "@testing-library/react-native": "14.0.1",
+    "test-renderer": "1.2.0"
   },
   "scripts": {
     "start": "expo start",
@@ -47,8 +53,10 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/chat.test.ts",
-    "test:e2e": "playwright test"
+    "test": "jest --runInBand --coverage",
+    "test:e2e": "playwright test",
+    "test:coverage": "npm test",
+    "test:unit": "jest --runInBand"
   },
   "private": true
 }
